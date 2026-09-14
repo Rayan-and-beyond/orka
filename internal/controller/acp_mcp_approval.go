@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,9 +22,15 @@ import (
 )
 
 const (
-	acpApprovalSecretKey     = "call.json"
-	acpApprovalOutcomeFailed = "failed"
-	acpMCPToolEffectKind     = "acp-mcp-tool"
+	acpApprovalSecretKey      = "call.json"
+	acpApprovalCodeCancelled  = "approval_cancelled"
+	acpApprovalCodeExpired    = "approval_expired"
+	acpApprovalCodeDeclined   = "approval_declined"
+	acpApprovalCodeStale      = "approval_stale"
+	acpApprovalCodeUnknown    = "tool_outcome_unknown"
+	acpApprovalOutcomeFailed  = "failed"
+	acpApprovalOutcomeUnknown = "unknown"
+	acpMCPToolEffectKind      = "acp-mcp-tool"
 )
 
 // acpMCPApprovalCall is private executable input, never an event payload. The
@@ -303,40 +308,46 @@ func (b *ACPMCPBroker) waitAndExecuteApproval(ctx context.Context, call *acpMCPA
 		if effect.State == store.ExternalEffectInFlight || effect.State == store.ExternalEffectOutcomeUnknown {
 			// Never reclaim a started approval call, even after its lease expires.
 			// The action may already have reached an external system.
-			result := acpApprovalError(call.ID, "tool_outcome_unknown")
-			if err := b.approvalOutcome(ctx, call, "unknown", "The action may have run. Do not repeat it automatically.", nil); err != nil {
+			result := acpApprovalError(call.ID, acpApprovalCodeUnknown)
+			if err := b.approvalOutcome(ctx, call, acpApprovalOutcomeUnknown, acpMCPApprovalUnknownReason, nil); err != nil {
 				return nil, false, err
 			}
 			return result, false, nil
 		}
 		decision, err := b.loadApprovalDecision(ctx, call)
 		if err != nil {
+			if ctx.Err() != nil {
+				return b.interruptedApproval(ctx, call, effect, credentials)
+			}
 			return nil, false, err
 		}
 		switch decision.Status {
 		case approvals.StatusDeclined:
-			return b.blockApproval(ctx, call, credentials, "approval_declined")
+			return b.blockApproval(ctx, call, credentials, acpApprovalCodeDeclined)
 		case approvals.StatusExpired:
-			return b.blockApproval(ctx, call, credentials, "approval_expired")
+			return b.blockApproval(ctx, call, credentials, acpApprovalCodeExpired)
 		case approvals.StatusCancelled:
-			return b.blockApproval(ctx, call, credentials, "approval_cancelled")
+			return b.blockApproval(ctx, call, credentials, acpApprovalCodeCancelled)
 		}
 		if !time.Now().UTC().Before(call.ExpiresAt) {
 			if err := b.approvalDecision(ctx, call, events.ExecutionEventTypeApprovalExpired, "Approval wait expired"); err != nil {
 				return nil, false, err
 			}
-			return b.blockApproval(ctx, call, credentials, "approval_expired")
-		}
-		if err := b.revalidateApproval(ctx, call, credentials); err != nil {
-			if ctx.Err() != nil {
-				return b.interruptedApproval(ctx, call, effect, credentials)
-			}
-			return b.revokeApproval(ctx, call, credentials, err)
+			return b.blockApproval(ctx, call, credentials, acpApprovalCodeExpired)
 		}
 		switch decision.Status {
 		case approvals.StatusApproved:
+			// The prompt authority watcher cancels a pending wait when its
+			// durable lease ends. Resolve credentials and policy only when
+			// approval could authorize execution, outside the polling path.
+			if err := b.revalidateApproval(ctx, call, credentials); err != nil {
+				if ctx.Err() != nil {
+					return b.interruptedApproval(ctx, call, effect, credentials)
+				}
+				return b.revokeApproval(ctx, call, credentials, err)
+			}
 			if effect.State != store.ExternalEffectPending {
-				return b.blockApproval(ctx, call, credentials, "approval_stale")
+				return b.blockApproval(ctx, call, credentials, acpApprovalCodeStale)
 			}
 			return b.executeApprovedCall(ctx, call, secretUID, effect, credentials)
 		}
@@ -346,10 +357,14 @@ func (b *ACPMCPBroker) waitAndExecuteApproval(ctx context.Context, call *acpMCPA
 		case <-ticker.C:
 		}
 		// A second delivery may have executed while this handler waited.
-		effect, err = b.Effects.GetExternalEffect(ctx, effect.ID)
+		current, err := b.Effects.GetExternalEffect(ctx, effect.ID)
 		if err != nil {
+			if ctx.Err() != nil {
+				return b.interruptedApproval(ctx, call, effect, credentials)
+			}
 			return nil, false, err
 		}
+		effect = current
 	}
 }
 
@@ -372,25 +387,14 @@ func (b *ACPMCPBroker) loadApprovalDecision(ctx context.Context, call *acpMCPApp
 }
 
 func (b *ACPMCPBroker) replayApprovalResult(ctx context.Context, call *acpMCPApprovalCall, effect *store.ExternalEffect) (json.RawMessage, error) {
-	if len(effect.Response) == 0 || !json.Valid(effect.Response) {
-		return nil, errors.New("approval receipt is invalid")
-	}
-	outcome, reason := "succeeded", "Recorded tool result"
-	if effect.State == store.ExternalEffectFailed {
-		var failure struct {
-			Code string `json:"code"`
-		}
-		if json.Unmarshal(effect.Response, &failure) != nil || failure.Code == "" || !mcpToolResultIsError(effect.Response) {
-			return nil, errors.New("approval denial receipt is invalid")
-		}
-		outcome, reason = "not_started", failure.Code
-	} else if mcpToolResultIsError(effect.Response) {
-		outcome = acpApprovalOutcomeFailed
-	}
-	if err := b.approvalOutcome(ctx, call, outcome, reason, effect.Response); err != nil {
+	outcome, reason, result, err := acpMCPApprovalReceiptOutcome(effect, call.ID)
+	if err != nil {
 		return nil, err
 	}
-	return effect.Response, nil
+	if err := b.approvalOutcome(ctx, call, outcome, reason, result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (b *ACPMCPBroker) interruptedApproval(ctx context.Context, call *acpMCPApprovalCall, effect *store.ExternalEffect, credentials ACPMCPBrokerCredentials) (json.RawMessage, bool, error) {
@@ -411,18 +415,22 @@ func (b *ACPMCPBroker) interruptedApproval(ctx context.Context, call *acpMCPAppr
 }
 
 func (b *ACPMCPBroker) revokeApproval(ctx context.Context, call *acpMCPApprovalCall, credentials ACPMCPBrokerCredentials, cause error) (json.RawMessage, bool, error) {
-	code := "approval_stale"
+	// Revocation records evidence only. The authority watcher can cancel the
+	// call after revalidation fails, so settlement needs its own bounded context.
+	settleCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer stop()
+	code := acpApprovalCodeStale
 	eventType := events.ExecutionEventTypeApprovalCancelled
 	if errors.Is(cause, errACPMCPTaskCancelled) {
-		code = "approval_cancelled"
+		code = acpApprovalCodeCancelled
 	} else if errors.Is(cause, errACPMCPTaskExpired) {
-		code = "approval_expired"
+		code = acpApprovalCodeExpired
 		eventType = events.ExecutionEventTypeApprovalExpired
 	}
-	if err := b.approvalDecision(ctx, call, eventType, code); err != nil {
+	if err := b.approvalDecision(settleCtx, call, eventType, code); err != nil {
 		return nil, false, err
 	}
-	return b.blockApproval(ctx, call, credentials, code)
+	return b.blockApproval(settleCtx, call, credentials, code)
 }
 
 func (b *ACPMCPBroker) revalidateApproval(ctx context.Context, call *acpMCPApprovalCall, credentials ACPMCPBrokerCredentials) error {
@@ -474,10 +482,10 @@ func (b *ACPMCPBroker) blockApproval(ctx context.Context, call *acpMCPApprovalCa
 			return nil, false, err
 		}
 	case store.ExternalEffectFailed:
-		if !json.Valid(current.Response) || !mcpToolResultIsError(current.Response) {
-			return nil, false, errors.New("approval denial receipt is invalid")
+		_, code, result, err = acpMCPApprovalReceiptOutcome(current, call.ID)
+		if err != nil {
+			return nil, false, err
 		}
-		result = current.Response
 	default:
 		// Another delivery may have claimed the call. It owns the execution
 		// outcome; this waiter must not report that an action was unstarted.
@@ -492,7 +500,7 @@ func (b *ACPMCPBroker) blockApproval(ctx context.Context, call *acpMCPApprovalCa
 func (b *ACPMCPBroker) executeApprovedCall(ctx context.Context, call *acpMCPApprovalCall, secretUID types.UID, effect *store.ExternalEffect, credentials ACPMCPBrokerCredentials) (json.RawMessage, bool, error) {
 	stored, currentUID, err := b.loadApprovalCall(ctx, call)
 	if err != nil || currentUID != secretUID || !stored.ExpiresAt.Equal(call.ExpiresAt) || !time.Now().UTC().Before(call.ExpiresAt) {
-		return b.blockApproval(ctx, call, credentials, "approval_stale")
+		return b.blockApproval(ctx, call, credentials, acpApprovalCodeStale)
 	}
 	// Execute only the private persisted request, never the review preview or
 	// the redelivered caller's arguments.
@@ -541,11 +549,11 @@ func (b *ACPMCPBroker) executeApprovedCall(ctx context.Context, call *acpMCPAppr
 	if err != nil {
 		settleCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer stop()
-		result := acpApprovalError(call.ID, "approval_stale")
+		result := acpApprovalError(call.ID, acpApprovalCodeStale)
 		if errors.Is(err, errACPMCPTaskCancelled) {
-			result = acpApprovalError(call.ID, "approval_cancelled")
+			result = acpApprovalError(call.ID, acpApprovalCodeCancelled)
 		} else if errors.Is(err, errACPMCPTaskExpired) {
-			result = acpApprovalError(call.ID, "approval_expired")
+			result = acpApprovalError(call.ID, acpApprovalCodeExpired)
 		}
 		if settleErr := settleExternalEffectStore(settleCtx, b.Effects, credentials.ControllerFence, effect.Identity, store.ExternalEffectFailed, result); settleErr != nil {
 			return nil, false, settleErr
@@ -559,8 +567,8 @@ func (b *ACPMCPBroker) executeApprovedCall(ctx context.Context, call *acpMCPAppr
 	if executeErr == nil {
 		executeErr = b.revalidateApproval(callCtx, call, credentials)
 	}
-	if executeErr == nil && (len(result) == 0 || len(result) > harnessv2.MaxMCPResultBytes || !json.Valid(result)) {
-		executeErr = errors.New("approved tool returned an invalid result")
+	if executeErr == nil {
+		result, executeErr = canonicalMCPApprovalResult(result)
 	}
 	if executeErr == nil {
 		_, executeErr = b.Effects.TransitionExternalEffect(callCtx, store.ExternalEffectTransition{
@@ -574,10 +582,10 @@ func (b *ACPMCPBroker) executeApprovedCall(ctx context.Context, call *acpMCPAppr
 	defer stop()
 	if executeErr != nil {
 		_ = settleExternalEffectStore(settleCtx, b.Effects, credentials.ControllerFence, effect.Identity, store.ExternalEffectOutcomeUnknown, nil)
-		if err := b.approvalOutcome(settleCtx, call, "unknown", "The action may have run. Do not repeat it automatically.", nil); err != nil {
+		if err := b.approvalOutcome(settleCtx, call, acpApprovalOutcomeUnknown, acpMCPApprovalUnknownReason, nil); err != nil {
 			return nil, false, err
 		}
-		return acpApprovalError(call.ID, "tool_outcome_unknown"), false, nil
+		return acpApprovalError(call.ID, acpApprovalCodeUnknown), false, nil
 	}
 	outcome := "succeeded"
 	if mcpToolResultIsError(result) {
@@ -589,19 +597,33 @@ func (b *ACPMCPBroker) executeApprovedCall(ctx context.Context, call *acpMCPAppr
 	return result, false, nil
 }
 
+// Kubernetes stores responses as JSON values and can change their field order,
+// number spelling, and escaping. Hash and replay the same canonical form on
+// both sides of storage so a valid saved receipt remains verifiable.
+func canonicalMCPApprovalResult(result json.RawMessage) (json.RawMessage, error) {
+	if len(result) == 0 || len(result) > harnessv2.MaxMCPResultBytes {
+		return nil, errors.New("approved tool returned an invalid result")
+	}
+	canonical, err := harnessv2.CanonicalJSON(result)
+	if err != nil || len(canonical) > harnessv2.MaxMCPResultBytes {
+		return nil, errors.New("approved tool returned an invalid result")
+	}
+	return canonical, nil
+}
+
 func acpApprovalError(id, code string) json.RawMessage {
 	messages := map[string]string{
-		"approval_declined":    "Tool execution was declined by the reviewer.",
-		"approval_expired":     "The approval expired before tool execution.",
-		"approval_cancelled":   "The approval was cancelled before tool execution.",
-		"approval_stale":       "The original task or tool authority is no longer valid.",
-		"tool_outcome_unknown": "The tool may have run. Do not repeat it automatically.",
+		acpApprovalCodeDeclined:  "Tool execution was declined by the reviewer.",
+		acpApprovalCodeExpired:   "The approval expired before tool execution.",
+		acpApprovalCodeCancelled: "The approval was cancelled before tool execution.",
+		acpApprovalCodeStale:     "The original task or tool authority is no longer valid.",
+		acpApprovalCodeUnknown:   "The tool may have run. Do not repeat it automatically.",
 	}
-	result, _ := json.Marshal(struct {
+	result, _ := harnessv2.CanonicalValue(struct {
 		IsError    bool   `json:"isError"`
 		Code       string `json:"code"`
 		ApprovalID string `json:"approvalID"`
 		Error      string `json:"error"`
 	}{IsError: true, Code: code, ApprovalID: id, Error: messages[code]})
-	return bytes.Clone(result)
+	return result
 }

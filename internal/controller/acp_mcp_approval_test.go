@@ -469,3 +469,112 @@ func TestMCPApprovalExecutionFailureRemainsDistinctFromDecline(t *testing.T) {
 		t.Fatal("approved tool error lost its decision, outcome, or replay receipt")
 	}
 }
+
+type approvalObservedEffectStore struct {
+	store.ExternalEffectStore
+	reads chan struct{}
+}
+
+func (s approvalObservedEffectStore) GetExternalEffect(ctx context.Context, id string) (*store.ExternalEffect, error) {
+	effect, err := s.ExternalEffectStore.GetExternalEffect(ctx, id)
+	if err == nil {
+		select {
+		case s.reads <- struct{}{}:
+		default:
+		}
+	}
+	return effect, err
+}
+
+func TestMCPApprovalPendingPollsDeferFullRevalidationUntilDecision(t *testing.T) {
+	f := newMCPApprovalFixture(t)
+	resolver := f.broker.Credentials
+	var resolutions atomic.Int32
+	f.broker.Credentials = ACPMCPBrokerCredentialResolverFunc(func(ctx context.Context, request harnessv2.MCPBrokerCallRequest) (ACPMCPBrokerCredentials, error) {
+		resolutions.Add(1)
+		return resolver.ResolveACPMCPBrokerCredentials(ctx, request)
+	})
+	reads := make(chan struct{}, 3)
+	f.broker.Effects = approvalObservedEffectStore{ExternalEffectStore: f.broker.Effects, reads: reads}
+	done := f.start(f.request)
+	pending := f.pending()
+	for range 3 {
+		select {
+		case <-reads:
+		case <-time.After(5 * time.Second):
+			t.Fatal("pending approval did not continue polling")
+		}
+	}
+	if got := resolutions.Load(); got != 1 {
+		t.Fatalf("pending approval resolved credentials %d times, want only initial authentication", got)
+	}
+	// A pending review does not authorize execution. The full check must still
+	// reject authority changed during the wait before any tool can start.
+	f.authorized.Store(false)
+	f.decide(pending.ID, events.ExecutionEventTypeApprovalApproved)
+	result := awaitMCPApprovalResult(t, done)
+	if !result.IsError || !strings.Contains(string(result.Result), "approval_stale") || f.count.Load() != 0 || resolutions.Load() < 2 {
+		t.Fatal("approved call did not revalidate changed authority before execution")
+	}
+}
+
+func TestMCPApprovalPendingPromptRevocationStopsWait(t *testing.T) {
+	f := newMCPApprovalFixture(t)
+	done := f.start(f.request)
+	pending := f.pending()
+	f.active.Store(false)
+
+	result := awaitMCPApprovalResult(t, done)
+	if !result.IsError || !strings.Contains(string(result.Result), "approval_stale") || f.count.Load() != 0 {
+		t.Fatal("revoked prompt kept its pending wait or started the tool")
+	}
+	listed, err := approvals.ListEvents(t.Context(), f.events, f.request.Namespace, "approval-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := approvals.Derive(listed, time.Time{})
+	if len(values) != 1 || values[0].ID != pending.ID || values[0].Status != approvals.StatusCancelled || values[0].ExecutionOutcome != "not_started" {
+		t.Fatal("revoked pending approval lost its cancellation evidence")
+	}
+}
+
+type approvalCancelDuringRevocationStore struct {
+	store.DeduplicatingExecutionEventStore
+	cancel    context.CancelFunc
+	cancelled atomic.Bool
+}
+
+func (s *approvalCancelDuringRevocationStore) AppendExecutionEventIfAbsent(ctx context.Context, event *store.ExecutionEvent, key string) (*store.ExecutionEvent, bool, error) {
+	if event.Type == events.ExecutionEventTypeApprovalCancelled {
+		// The prompt-authority watcher can cancel the original call after
+		// revalidation rejects it but before the denial evidence is saved.
+		s.cancelled.Store(true)
+		s.cancel()
+	}
+	return s.DeduplicatingExecutionEventStore.AppendExecutionEventIfAbsent(ctx, event, key)
+}
+
+func TestMCPApprovalRevocationSettlesWhenCallerContextEnds(t *testing.T) {
+	f := newMCPApprovalFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	storage := &approvalCancelDuringRevocationStore{DeduplicatingExecutionEventStore: f.events, cancel: cancel}
+	f.broker.ApprovalEvents = storage
+	done := f.startContext(ctx, f.request)
+	pending := f.pending()
+	f.authorized.Store(false)
+	f.decide(pending.ID, events.ExecutionEventTypeApprovalApproved)
+
+	result := awaitMCPApprovalResult(t, done)
+	if !storage.cancelled.Load() || !result.IsError || !strings.Contains(string(result.Result), "approval_stale") || f.count.Load() != 0 {
+		t.Fatal("caller cancellation lost the definitive unstarted result")
+	}
+	listed, err := approvals.ListEvents(t.Context(), f.events, f.request.Namespace, "approval-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := approvals.Derive(listed, time.Time{})
+	if len(values) != 1 || values[0].Status != approvals.StatusApproved || values[0].ExecutionOutcome != "not_started" {
+		t.Fatal("caller cancellation lost the saved review decision or denial outcome")
+	}
+}

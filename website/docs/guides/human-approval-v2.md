@@ -68,8 +68,10 @@ Use `decline` to reject the action. Reviewers need `update` on
 `core.orka.ai/tasks/approvals` and `patch` on the parent Task. Gateway-owned
 Tasks also enforce their existing operate permission. See the
 [authorization reference](../reference/api-authorization.md#route-permissions).
-The first terminal decision wins. Repeating that decision returns its saved
-state; a competing decision receives a conflict.
+The first terminal decision wins. While the bound Task run remains active,
+repeating that decision returns its saved state. A competing decision receives
+a conflict. Once the run settles or its binding becomes stale, even an identical
+decision retry receives HTTP 409.
 
 The panel separates the review decision from execution. An approved action
 can still fail, become stale before starting, or have an unknown outcome.
@@ -119,11 +121,12 @@ the Task ends or its review deadline expires.
 
 Execution reserves a durable external-effect record before review and claims
 it once after approval. A committed result can be returned again without
-calling the tool. Once execution has started, an interrupted or missing result
-stays unknown. Orka never takes over an expired execution lease to try the
-action again. Task ownership removes the private request Secret when the Task
-is deleted; retain the Task and its durable stores while investigating an
-unknown outcome.
+calling the tool. After a controller restart, Orka repairs missing approval
+execution events from those durable records. A committed result restores its
+outcome; a started action without a committed result becomes `unknown`.
+Orka never takes over an expired execution lease to try the action again.
+Task ownership removes the private request Secret when the Task is deleted;
+retain the Task and its durable stores while investigating an unknown outcome.
 
 The example acceptance runner uses the real Task and approval APIs. It checks
 the counter before approval, after repeated decisions, after decline and
