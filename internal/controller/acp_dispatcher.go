@@ -120,6 +120,9 @@ type ACPDispatcher struct {
 	finalizedTurns  map[types.UID]string
 	staleRecoveryMu sync.Mutex
 
+	approvalRecoveryMu sync.Mutex
+	approvalRecovery   map[acpMCPApprovalTaskKey]acpMCPApprovalRecoveryProgress
+
 	substrateRouteOnce  sync.Once
 	substrateRouteHTTP  *http.Client
 	substrateRouteSetup error

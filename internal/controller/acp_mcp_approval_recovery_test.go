@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -136,7 +137,7 @@ func (f *mcpApprovalRecoveryFixture) seed(t *testing.T, state store.ExternalEffe
 			Kind: acpMCPToolEffectKind, Namespace: f.request.Namespace,
 			AggregateID: string(f.request.Authorization.RuntimeSessionUID), OperationID: string(f.request.Metadata.OperationID),
 		},
-		RequestDigest: call.RequestDigest, Fence: f.fence, CreatedAt: call.CreatedAt,
+		RequestDigest: call.RequestDigest, Fence: f.fence, CreatedAt: call.CreatedAt, ApprovalTaskUID: call.Task.UID,
 	})
 	require.NoError(t, err)
 	require.NoError(t, f.broker.requestToolApproval(f.ctx, call))
@@ -379,9 +380,11 @@ func TestMCPApprovalPostPollCancellationPersistsUnstartedReceipt(t *testing.T) {
 
 type approvalRecoveryEventStore struct {
 	store.DeduplicatingExecutionEventStore
-	lists    atomic.Int32
-	appends  atomic.Int32
-	failNext atomic.Bool
+	lists       atomic.Int32
+	sequences   atomic.Int32
+	appends     atomic.Int32
+	failNext    atomic.Bool
+	afterAppend func()
 }
 
 func (s *approvalRecoveryEventStore) ListExecutionEvents(ctx context.Context, filter store.ExecutionEventFilter) ([]store.ExecutionEvent, error) {
@@ -389,12 +392,87 @@ func (s *approvalRecoveryEventStore) ListExecutionEvents(ctx context.Context, fi
 	return s.DeduplicatingExecutionEventStore.ListExecutionEvents(ctx, filter)
 }
 
+func (s *approvalRecoveryEventStore) GetLatestExecutionEventSeq(ctx context.Context, namespace, streamType, streamID string) (int64, error) {
+	s.sequences.Add(1)
+	return s.DeduplicatingExecutionEventStore.GetLatestExecutionEventSeq(ctx, namespace, streamType, streamID)
+}
+
 func (s *approvalRecoveryEventStore) AppendExecutionEventIfAbsent(ctx context.Context, event *store.ExecutionEvent, key string) (*store.ExecutionEvent, bool, error) {
 	s.appends.Add(1)
 	if s.failNext.Swap(false) {
 		return nil, false, errors.New("injected approval projection outage")
 	}
-	return s.DeduplicatingExecutionEventStore.AppendExecutionEventIfAbsent(ctx, event, key)
+	persisted, appended, err := s.DeduplicatingExecutionEventStore.AppendExecutionEventIfAbsent(ctx, event, key)
+	if err == nil && appended && s.afterAppend != nil {
+		s.afterAppend()
+	}
+	return persisted, appended, err
+}
+
+func TestMCPApprovalRecoveryOnlyReadsOwningTaskAndSkipsUnchangedHistory(t *testing.T) {
+	f := newMCPApprovalRecoveryFixture(t)
+	_, effect := f.seed(t, store.ExternalEffectSucceeded, "running", true, json.RawMessage(`{"workOrder":"simulated-1"}`))
+	for i := range 30 {
+		other := f.task.DeepCopy()
+		other.Name, other.UID, other.ResourceVersion = fmt.Sprintf("other-task-%d", i), types.UID(fmt.Sprintf("other-uid-%d", i)), ""
+		require.NoError(t, f.kube.Create(f.ctx, other))
+	}
+	// Automatic calls retain the same execution identity kind but have no
+	// approval discovery hint, even after a terminal receipt has been saved.
+	_, err := runExternalEffect(f.ctx, f.control, f.fence, store.ExternalEffectIdentity{
+		Kind: acpMCPToolEffectKind, Namespace: f.request.Namespace,
+		AggregateID: effect.Identity.AggregateID, OperationID: "automatic-operation",
+	}, "automatic-lookup", func(context.Context) (json.RawMessage, error) {
+		return json.RawMessage(`{"available":true}`), nil
+	})
+	require.NoError(t, err)
+
+	observed := &approvalRecoveryEventStore{DeduplicatingExecutionEventStore: f.events}
+	f.dispatcher.EventStore = observed
+	require.NoError(t, f.reconcile(t))
+	require.EqualValues(t, 1, observed.sequences.Load(), "only the owning Task needs an indexed sequence read")
+	require.EqualValues(t, 2, observed.lists.Load(), "read the owning history once and recheck it under the epoch guard")
+	require.EqualValues(t, 1, observed.appends.Load())
+	// The first follow-up observes recovery's own append. Later scans must
+	// skip full histories while the receipt and event sequence stay unchanged.
+	require.NoError(t, f.reconcile(t))
+	lists, exactReads := observed.lists.Load(), f.exactReads.Load()
+	for range 3 {
+		require.NoError(t, f.reconcile(t))
+	}
+	require.Equal(t, lists, observed.lists.Load())
+	require.Equal(t, exactReads, f.exactReads.Load())
+	require.Len(t, f.dispatcher.approvalRecovery, 1)
+	persisted, err := f.control.GetExternalEffectByIdentity(f.ctx, effect.Identity)
+	require.NoError(t, err)
+	require.Equal(t, effect, persisted, "recovery must not change the original execution identity or receipt")
+
+	require.NoError(t, f.kube.Delete(f.ctx, f.task))
+	sequences := observed.sequences.Load()
+	require.NoError(t, f.reconcile(t))
+	require.Equal(t, sequences, observed.sequences.Load(), "historical effects for deleted Tasks need no event query")
+	require.Empty(t, f.dispatcher.approvalRecovery)
+}
+
+func TestMCPApprovalRecoveryCacheDoesNotHideEventRacingWithProjection(t *testing.T) {
+	f := newMCPApprovalRecoveryFixture(t)
+	call, _ := f.seed(t, store.ExternalEffectSucceeded, "", true, json.RawMessage(`{"workOrder":"simulated-1"}`))
+	var injected atomic.Bool
+	observed := &approvalRecoveryEventStore{DeduplicatingExecutionEventStore: f.events}
+	observed.afterAppend = func() {
+		if injected.CompareAndSwap(false, true) {
+			require.NoError(t, f.broker.approvalOutcome(f.ctx, call, "running", "Late start event", nil))
+		}
+	}
+	f.dispatcher.EventStore = observed
+	require.NoError(t, f.reconcile(t))
+	stale, _ := f.approval(t)
+	require.Equal(t, "running", stale.ExecutionOutcome)
+	require.NoError(t, f.reconcile(t))
+	repaired, _ := f.approval(t)
+	require.Equal(t, "succeeded", repaired.ExecutionOutcome)
+	require.EqualValues(t, 2, observed.appends.Load())
+	require.EqualValues(t, 1, f.count.Load())
 }
 
 func TestMCPApprovalRecoveryRetriesFailedAndSupersededProjection(t *testing.T) {
@@ -437,6 +515,8 @@ func TestMCPApprovalRecoveryPreservesCurrentLeaseAndPendingCalls(t *testing.T) {
 		t.Run(string(state), func(t *testing.T) {
 			f := newMCPApprovalRecoveryFixture(t)
 			_, effect := f.seed(t, state, "", false, nil)
+			observed := &approvalRecoveryEventStore{DeduplicatingExecutionEventStore: f.events}
+			f.dispatcher.EventStore = observed
 			_, before := f.approval(t)
 			reads := f.exactReads.Load()
 			require.NoError(t, f.reconcile(t))
@@ -447,6 +527,13 @@ func TestMCPApprovalRecoveryPreservesCurrentLeaseAndPendingCalls(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, effect.State, persisted.State)
 			require.Equal(t, effect.Version, persisted.Version)
+			if state == store.ExternalEffectPending {
+				require.EqualValues(t, 1, observed.lists.Load(), "pending reviews need targeted expiry and prompt-liveness checks")
+				require.EqualValues(t, 1, observed.sequences.Load())
+			} else {
+				require.Zero(t, observed.lists.Load())
+				require.Zero(t, observed.sequences.Load(), "current live execution leases need no approval recovery queries")
+			}
 			require.Zero(t, f.count.Load())
 		})
 	}
@@ -469,30 +556,41 @@ func TestMCPApprovalRecoveryDoesNotAttachEvidenceToReusedTaskName(t *testing.T) 
 }
 
 func TestMCPApprovalRecoverySkipsMismatchedEffectsAndEmptyNamespaces(t *testing.T) {
-	for _, mismatch := range []string{"no_effects", "other_namespace", "other_request", "other_operation"} {
+	for _, mismatch := range []string{"no_effects", "other_namespace", "other_request", "other_operation", "other_task_hint", "unlabelled", "other_kind"} {
 		t.Run(mismatch, func(t *testing.T) {
 			f := newMCPApprovalRecoveryFixture(t)
 			_, effect := f.seed(t, store.ExternalEffectSucceeded, "running", true, json.RawMessage(`{"workOrder":"simulated-1"}`))
 			observed := &approvalRecoveryEventStore{DeduplicatingExecutionEventStore: f.events}
 			f.dispatcher.EventStore = observed
-			effects := map[string]store.ExternalEffect{effect.ID: *effect}
+			candidate := acpMCPApprovalEffect{ExternalEffect: *effect, taskUID: f.task.UID}
+			effects := map[string]acpMCPApprovalEffect{effect.ID: candidate}
 			switch mismatch {
 			case "no_effects":
 				clear(effects)
 			case "other_namespace":
-				effect.Identity.Namespace = "other"
-				effects[effect.ID] = *effect
+				candidate.Identity.Namespace = "other"
+				effects[effect.ID] = candidate
 			case "other_request":
-				effect.RequestDigest = testControllerMCPDigest("other request")
-				effects[effect.ID] = *effect
+				candidate.RequestDigest = testControllerMCPDigest("other request")
+				effects[effect.ID] = candidate
 			case "other_operation":
-				effect.Identity.OperationID = "other-operation"
-				effects[effect.ID] = *effect
+				candidate.Identity.OperationID = "other-operation"
+				effects[effect.ID] = candidate
+			case "other_task_hint":
+				candidate.taskUID = "another-task-uid"
+				effects[effect.ID] = candidate
+			case "unlabelled":
+				candidate.taskUID = ""
+				effects[effect.ID] = candidate
+			case "other_kind":
+				candidate.Identity.Kind = "workspace.prepare"
+				effects[effect.ID] = candidate
 			}
 			require.NoError(t, f.dispatcher.reconcileMCPApprovalExecutions(f.ctx, f.fence, []corev1alpha1.Task{*f.task}, effects))
 			require.Zero(t, observed.appends.Load())
-			if mismatch == "no_effects" || mismatch == "other_namespace" {
+			if mismatch != "other_request" && mismatch != "other_operation" {
 				require.Zero(t, observed.lists.Load(), "no candidate effects means no per-Task event reads")
+				require.Zero(t, observed.sequences.Load())
 			}
 		})
 	}

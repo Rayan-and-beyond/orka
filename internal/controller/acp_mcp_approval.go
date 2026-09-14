@@ -27,6 +27,7 @@ const (
 	acpApprovalCodeExpired    = "approval_expired"
 	acpApprovalCodeDeclined   = "approval_declined"
 	acpApprovalCodeStale      = "approval_stale"
+	acpApprovalStaleMessage   = "The original task or tool authority is no longer valid."
 	acpApprovalCodeUnknown    = "tool_outcome_unknown"
 	acpApprovalOutcomeFailed  = "failed"
 	acpApprovalOutcomeUnknown = "unknown"
@@ -91,6 +92,7 @@ func (b *ACPMCPBroker) serveApprovedCall(w http.ResponseWriter, ctx context.Cont
 	}
 	effect, err := b.Effects.ReserveExternalEffect(ctx, store.ReserveExternalEffectRequest{
 		Identity: identity, RequestDigest: call.RequestDigest, Fence: credentials.ControllerFence, CreatedAt: call.CreatedAt,
+		ApprovalTaskUID: call.Task.UID,
 	})
 	if err != nil {
 		writeACPMCPError(w, http.StatusConflict, "MCP approval operation conflicts with a previous call")
@@ -616,7 +618,7 @@ func acpApprovalError(id, code string) json.RawMessage {
 		acpApprovalCodeDeclined:  "Tool execution was declined by the reviewer.",
 		acpApprovalCodeExpired:   "The approval expired before tool execution.",
 		acpApprovalCodeCancelled: "The approval was cancelled before tool execution.",
-		acpApprovalCodeStale:     "The original task or tool authority is no longer valid.",
+		acpApprovalCodeStale:     acpApprovalStaleMessage,
 		acpApprovalCodeUnknown:   "The tool may have run. Do not repeat it automatically.",
 	}
 	result, _ := harnessv2.CanonicalValue(struct {

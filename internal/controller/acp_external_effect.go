@@ -390,11 +390,14 @@ func (d *ACPDispatcher) reconcileExpiredExternalEffects(ctx context.Context, tas
 		return err
 	}
 	now := time.Now().UTC()
-	approvalEffects := make(map[string]store.ExternalEffect)
+	approvalEffects := make(map[string]acpMCPApprovalEffect)
 	for i := range effects.Items {
 		effect := &effects.Items[i]
-		if effect.Spec.Kind == acpMCPToolEffectKind {
-			approvalEffects[effect.Spec.ID] = mcpApprovalEffectSnapshot(effect)
+		if effect.Spec.Kind == acpMCPToolEffectKind && effect.Labels[corev1alpha1.ControlRecordTaskUIDLabel] != "" {
+			candidate := mcpApprovalEffectSnapshot(effect)
+			if mcpApprovalEffectNeedsRecovery(&candidate.ExternalEffect, fence, now) {
+				approvalEffects[effect.Spec.ID] = candidate
+			}
 		}
 		if store.ExternalEffectState(effect.Status.State) != store.ExternalEffectInFlight || effect.Status.LeaseExpiresAt == nil ||
 			now.Before(effect.Status.LeaseExpiresAt.Add(acpExternalEffectReconcileGrace)) {
@@ -408,8 +411,10 @@ func (d *ACPDispatcher) reconcileExpiredExternalEffects(ctx context.Context, tas
 		if err != nil && !errors.Is(err, store.ErrConflict) {
 			return fmt.Errorf("reconcile expired external effect %s/%s: %w", effect.Namespace, effect.Name, err)
 		}
-		if err == nil && effect.Spec.Kind == acpMCPToolEffectKind {
-			approvalEffects[effect.Spec.ID] = *settled
+		if err == nil && effect.Spec.Kind == acpMCPToolEffectKind && effect.Labels[corev1alpha1.ControlRecordTaskUIDLabel] != "" {
+			candidate := mcpApprovalEffectSnapshot(effect)
+			candidate.ExternalEffect = *settled
+			approvalEffects[effect.Spec.ID] = candidate
 		}
 	}
 	return d.reconcileMCPApprovalExecutions(ctx, fence, tasks, approvalEffects)
