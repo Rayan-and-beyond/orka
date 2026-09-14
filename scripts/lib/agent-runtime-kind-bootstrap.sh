@@ -235,7 +235,7 @@ live_acp_kind_require_model_endpoint() {
 live_acp_kind_validate_vekil_catalog() {
   local models_file="$1"
   local codex_model="${ACP_E2E_CODEX_MODEL:-gpt-5.4}"
-  local claude_model="${ACP_E2E_CLAUDE_MODEL:-claude-sonnet-4.6}"
+  local claude_model="${ACP_E2E_CLAUDE_MODEL:-claude-haiku-4.5}"
   local copilot_model="${ACP_E2E_COPILOT_MODEL:-gpt-5.3-codex}"
   local opencode_model="${ACP_E2E_OPENCODE_MODEL:-${ACP_E2E_CODEX_MODEL:-gpt-5.4}}"
   opencode_model="${opencode_model#*/}"
@@ -247,7 +247,15 @@ live_acp_kind_validate_vekil_catalog() {
       "Vekil model ${opencode_model} for OpenCode does not advertise required endpoint /chat/completions or compatible /responses"
     return 1
   fi
-  live_acp_kind_require_model_endpoint "${models_file}" Claude "${claude_model}" /v1/messages || return 1
+  # The catalog advertises native endpoints. Vekil can also translate Anthropic
+  # messages through Chat or Responses; the live streaming probe checks that path.
+  if ! live_acp_kind_catalog_model_supports_endpoint "${models_file}" "${claude_model}" /v1/messages && \
+      ! live_acp_kind_catalog_model_supports_endpoint "${models_file}" "${claude_model}" /chat/completions && \
+      ! live_acp_kind_catalog_model_supports_endpoint "${models_file}" "${claude_model}" /responses; then
+    live_acp_kind_die \
+      "Vekil model ${claude_model} for Claude does not advertise /v1/messages or compatible /chat/completions or /responses"
+    return 1
+  fi
   live_acp_kind_require_model_endpoint "${models_file}" Copilot "${copilot_model}" /responses || return 1
 }
 
@@ -440,7 +448,7 @@ live_acp_kind_probe_vekil_wire_path() {
 
 live_acp_kind_probe_configured_models() {
   local codex_model="${ACP_E2E_CODEX_MODEL:-gpt-5.4}"
-  local claude_model="${ACP_E2E_CLAUDE_MODEL:-claude-sonnet-4.6}"
+  local claude_model="${ACP_E2E_CLAUDE_MODEL:-claude-haiku-4.5}"
   local copilot_model="${ACP_E2E_COPILOT_MODEL:-gpt-5.3-codex}"
   local opencode_model="${ACP_E2E_OPENCODE_MODEL:-${ACP_E2E_CODEX_MODEL:-gpt-5.4}}"
   opencode_model="${opencode_model#*/}"
