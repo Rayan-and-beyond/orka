@@ -3,8 +3,8 @@
 set -Eeuo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# shellcheck source=scripts/lib/live-acp-release-report.sh
-. "${root}/scripts/lib/live-acp-release-report.sh"
+# shellcheck source=scripts/lib/release-qualification-report.sh
+. "${root}/scripts/lib/release-qualification-report.sh"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/acp-release-report-test.XXXXXX")"
 trap 'rm -rf "${fixture}"' EXIT
 export RELEASE_GATE=1 ACP_E2E_REPORT_FILE="${fixture}/acceptance.json"
@@ -151,6 +151,39 @@ del(.images.copilot)
 MUTATIONS
 printf '%s\n' 'ok - skipped publication, moved base, inconsistent receipts, missing images and incomplete cleanup fail qualification'
 
+jq --arg hash "${digest#sha256:}" '
+  .release = {buildRunID:"123", buildRunAttempt:"1", version:"v0.2.0", bundleSHA256:$hash}
+  | .chart = {packageSHA256:$hash, install:true, containerTask:true, recovery:true,
+      noReplay:true, oppositeModeRejected:true, jobRemovedBeforeRestart:true, noReplayObservationSeconds:10,
+      pvcs:[{name:"orka-store",uid:"store",volumeName:"store-pv",phase:"Bound"},
+        {name:"orka-workspace-publisher",uid:"publisher",volumeName:"publisher-pv",phase:"Bound"}],
+      controllerPodUIDBefore:"old",controllerPodUIDAfter:"new",
+      task:{uid:"task",phase:"Succeeded",attempts:1,resultAvailable:true,jobUID:"job"}}
+' "${fixture}/qualified.json" >"${fixture}/qualified-bundle.json"
+acp_report_qualified "${fixture}/qualified-bundle.json"
+while IFS= read -r mutation; do
+  jq "${mutation}" "${fixture}/qualified-bundle.json" >"${ACP_E2E_REPORT_FILE}"
+  if acp_report_finish 2>/dev/null; then
+    printf 'incomplete chart evidence qualified: %s\n' "${mutation}" >&2
+    exit 1
+  fi
+done <<'MUTATIONS'
+del(.chart)
+.chart.install = false
+.chart.containerTask = false
+.chart.recovery = false
+.chart.noReplay = false
+.chart.oppositeModeRejected = false
+.chart.jobRemovedBeforeRestart = false
+.chart.noReplayObservationSeconds = 0
+.chart.pvcs[0].uid = null
+.chart.controllerPodUIDAfter = .chart.controllerPodUIDBefore
+.chart.task.attempts = 2
+.release.buildRunAttempt = "0"
+.release.bundleSHA256 = "invalid"
+MUTATIONS
+printf '%s\n' 'ok - bundled releases also require chart installation, durable recovery, no replay and mode-rejection evidence'
+
 ACP_E2E_WRITE_SOURCE_REPO="https://${sentinel}@github.com/orka-agents/orka" \
   ACP_E2E_WRITE_SOURCE_REF="${sentinel}" acp_report_init "${root}"
 jq -e '.candidateSHA == null and .sourceRepository == null' "${ACP_E2E_REPORT_FILE}" >/dev/null
@@ -164,9 +197,9 @@ mkdir "${fixture}/bin"
 export QUALIFICATION_FIXTURE="${fixture}"
 jq -n --arg sha "${GITHUB_SHA}" '{status:"completed",conclusion:"success",event:"workflow_dispatch",
   head_sha:$sha,head_branch:"main",repository:{full_name:"orka-agents/orka"},
-  head_repository:{full_name:"orka-agents/orka"},path:".github/workflows/live-acp-release-gate.yml",run_attempt:1}' \
+  head_repository:{full_name:"orka-agents/orka"},path:".github/workflows/release-qualification.yml",run_attempt:1}' \
   >"${fixture}/run-original.json"
-jq -n --arg name "live-acp-release-acceptance-${GITHUB_RUN_ID}-1" \
+jq -n --arg name "release-qualification-acceptance-${GITHUB_RUN_ID}-1" \
   '[{artifacts:[{name:$name,expired:false}]}]' >"${fixture}/artifacts.json"
 cat >"${fixture}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -194,12 +227,12 @@ fi
 STUB
 chmod +x "${fixture}/bin/gh"
 cp "${fixture}/run-original.json" "${fixture}/run.json"
-PATH="${fixture}/bin:${PATH}" bash "${root}/scripts/verify-acp-release-qualification.sh" \
+PATH="${fixture}/bin:${PATH}" bash "${root}/scripts/verify-release-qualification.sh" \
   "${GITHUB_SHA}" "${GITHUB_RUN_ID}" >/dev/null
-rm -rf "${root}/bin/acp-release-qualification-${GITHUB_RUN_ID}-1"
+rm -rf "${root}/bin/release-qualification-${GITHUB_RUN_ID}-1"
 while IFS= read -r mutation; do
   jq "${mutation}" "${fixture}/run-original.json" >"${fixture}/run.json"
-  if PATH="${fixture}/bin:${PATH}" bash "${root}/scripts/verify-acp-release-qualification.sh" \
+  if PATH="${fixture}/bin:${PATH}" bash "${root}/scripts/verify-release-qualification.sh" \
       "${GITHUB_SHA}" "${GITHUB_RUN_ID}" >/dev/null 2>&1; then
     printf 'untrusted workflow metadata qualified: %s\n' "${mutation}" >&2
     exit 1
@@ -210,7 +243,7 @@ done <<'MUTATIONS'
 .head_branch = "topic"
 .head_sha = "0000000000000000000000000000000000000000"
 .head_repository.full_name = "external/orka"
-.path = ".github/workflows/live-acp-runtime-e2e.yml"
+.path = ".github/workflows/agent-runtime-e2e.yml"
 .conclusion = "failure"
 .status = "in_progress"
 .run_attempt = 2
@@ -221,9 +254,9 @@ cp "${fixture}/run-original.json" "${fixture}/run.json"
 while IFS= read -r mutation; do
   jq "${mutation}" "${fixture}/run-original.json" >"${fixture}/run-after-download.json"
   rm -f "${fixture}/download-complete"
-  if PATH="${fixture}/bin:${PATH}" bash "${root}/scripts/verify-acp-release-qualification.sh" \
+  if PATH="${fixture}/bin:${PATH}" bash "${root}/scripts/verify-release-qualification.sh" \
       "${GITHUB_SHA}" "${GITHUB_RUN_ID}" >/dev/null 2>&1; then
-    rm -rf "${root}/bin/acp-release-qualification-${GITHUB_RUN_ID}-1"
+    rm -rf "${root}/bin/release-qualification-${GITHUB_RUN_ID}-1"
     printf 'workflow change during artifact download qualified: %s\n' "${mutation}" >&2
     exit 1
   fi
@@ -235,15 +268,33 @@ done <<'MUTATIONS'
 MUTATIONS
 printf '%s\n' 'ok - workflow reruns and status changes during artifact download invalidate qualification'
 
+# Release-line evidence must name that exact branch throughout the workflow
+# and canary receipts; default-branch evidence cannot be relabeled for it.
+rm -f "${fixture}/run-after-download.json" "${fixture}/download-complete"
+jq '.head_branch = "release-0.2"' "${fixture}/run-original.json" >"${fixture}/run.json"
+cp "${fixture}/qualified.json" "${fixture}/qualified-main.json"
+jq '.workflow.ref = "refs/heads/release-0.2" | .baseBranch = "release-0.2"
+  | .task.delivery.prReceipt.baseBranch = "release-0.2" | .observations.pullRequest.baseBranch = "release-0.2"' \
+  "${fixture}/qualified-main.json" >"${fixture}/qualified.json"
+PATH="${fixture}/bin:${PATH}" bash "${root}/scripts/verify-release-qualification.sh" \
+  "${GITHUB_SHA}" "${GITHUB_RUN_ID}" release-0.2 >/dev/null
+rm -rf "${root}/bin/release-qualification-${GITHUB_RUN_ID}-1"
+if PATH="${fixture}/bin:${PATH}" bash "${root}/scripts/verify-release-qualification.sh" \
+    "${GITHUB_SHA}" "${GITHUB_RUN_ID}" main >/dev/null 2>&1; then
+  echo 'release-branch evidence was accepted as default-branch evidence' >&2
+  exit 1
+fi
+printf '%s\n' 'ok - qualification binds the exact release branch as well as the candidate SHA'
+
 awk '
   $0 == "      - name: Validate trusted dispatch inputs" { step=1; next }
   step && $0 == "        run: |" { body=1; next }
   body && /^      - name:/ { exit }
   body { sub(/^          /, ""); print }
-' "${root}/.github/workflows/live-acp-release-gate.yml" >"${fixture}/dispatch.sh"
+' "${root}/.github/workflows/release-qualification.yml" >"${fixture}/dispatch.sh"
 [[ -s "${fixture}/dispatch.sh" ]]
 validate_dispatch() {
-  CHECKED_OUT_SHA="${GITHUB_SHA}" DEFAULT_BRANCH=main PR_BASE=main \
+  CHECKED_OUT_SHA="${GITHUB_SHA}" DEFAULT_BRANCH=main PR_BASE="${TEST_PR_BASE:-main}" \
     CONFIGURED_PUBLICATION_REPOSITORY=https://github.com/sozercan/orka-acp-release-gate.git \
     SOURCE_REF="${GITHUB_SHA}" SOURCE_REPOSITORY=https://github.com/orka-agents/orka.git \
     bash "${fixture}/dispatch.sh"
@@ -253,6 +304,11 @@ for publication in https://github.com/sozercan/orka-acp-release-gate.git https:/
 done
 if GITHUB_REF=refs/pull/42/merge validate_dispatch >/dev/null 2>&1; then
   echo 'trusted dispatch accepted a pull-request ref' >&2
+  exit 1
+fi
+GITHUB_REF=refs/heads/release-0.2 TEST_PR_BASE=release-0.2 validate_dispatch
+if GITHUB_REF=refs/heads/release-0.2 TEST_PR_BASE=main validate_dispatch >/dev/null 2>&1; then
+  echo 'trusted dispatch accepted a different PR base' >&2
   exit 1
 fi
 if ACP_E2E_WRITE_PUBLICATION_REPO=https://github.com/other/fork.git validate_dispatch >/dev/null 2>&1; then

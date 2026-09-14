@@ -1,4 +1,5 @@
-name: Live ACP Release Gate
+name: Release Qualification
+run-name: Release Qualification (${{ inputs.dispatch_id || inputs.source_ref }})
 
 on:
   workflow_dispatch:
@@ -17,24 +18,37 @@ on:
         required: true
         type: string
       pr_base:
-        description: Default branch targeted by the temporary canary PR
+        description: Dispatched main or release-X.Y branch targeted by the temporary canary PR
         required: true
         default: main
         type: string
+      release_run_id:
+        description: Optional parent Release workflow run containing the candidate bundle
+        required: false
+        type: string
+      release_run_attempt:
+        description: Candidate artifact attempt in the parent Release workflow
+        required: false
+        type: string
+      dispatch_id:
+        description: Correlation ID supplied by the parent Release workflow
+        required: false
+        type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: live-acp-release-gate
+  group: release-qualification
   cancel-in-progress: false
 
 jobs:
-  live-acp-release-gate:
-    name: ACP destructive release acceptance
+  release-qualification:
+    name: Qualify release candidate
     runs-on: ubuntu-latest
     timeout-minutes: 240
-    environment: live-acp-release-gate
+    environment: release-qualification
     env:
       RELEASE_GATE: "1"
       ACP_E2E_REPO: ${{ inputs.source_repository }}
@@ -53,7 +67,7 @@ jobs:
       # credentials. Do not copy arbitrary dispatch inputs into the artifact.
       - name: Initialize acceptance evidence
         env:
-          ACP_E2E_REPORT_FILE: ${{ runner.temp }}/live-acp-release-gate/acceptance.json
+          ACP_E2E_REPORT_FILE: ${{ runner.temp }}/release-qualification/acceptance.json
         run: |
           set -Eeuo pipefail
           printf 'ACP_E2E_REPORT_FILE=%s\n' "${ACP_E2E_REPORT_FILE}" >>"${GITHUB_ENV}"
@@ -65,7 +79,7 @@ jobs:
           jq -n --arg candidate "${candidate}" --arg sha "${GITHUB_SHA}" \
             --arg repository "${GITHUB_REPOSITORY}" --arg ref "${GITHUB_REF}" \
             --arg run "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" \
-            '{schemaVersion:1, gate:"live-acp-release-gate", mode:"release",
+            '{schemaVersion:1, gate:"release-qualification", mode:"release",
               candidateSHA:$candidate, checkoutSHA:$sha, result:"not_qualified",
               stage:"trusted_dispatch", workflow:{repository:$repository, ref:$ref,
                 sha:$sha, runID:$run, runAttempt:$attempt, event:"workflow_dispatch"}}' \
@@ -81,12 +95,16 @@ jobs:
           SOURCE_REPOSITORY: ${{ inputs.source_repository }}
         run: |
           set -Eeuo pipefail
-          if [[ "${GITHUB_REF}" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
-            echo "Dispatch this workflow from the default branch (${DEFAULT_BRANCH}) only." >&2
+          if [[ "${GITHUB_REPOSITORY}" != "orka-agents/orka" ]]; then
+            echo "Release qualification must run in orka-agents/orka." >&2
             exit 1
           fi
-          if [[ "${PR_BASE}" != "${DEFAULT_BRANCH}" ]]; then
-            echo "pr_base must equal the default branch (${DEFAULT_BRANCH})." >&2
+          if [[ "${GITHUB_REF}" != "refs/heads/${DEFAULT_BRANCH}" && ! "${GITHUB_REF}" =~ ^refs/heads/release-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Dispatch from the default branch or an explicitly permitted release-X.Y branch." >&2
+            exit 1
+          fi
+          if [[ "${PR_BASE}" != "${GITHUB_REF#refs/heads/}" ]]; then
+            echo "pr_base must equal the dispatched branch." >&2
             exit 1
           fi
           if [[ ! "${SOURCE_REPOSITORY}" =~ ^https://github\.com/[^/?#]+/[^/?#]+(\.git)?$ ]]; then
@@ -127,15 +145,30 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Free disk space for Docker-heavy live E2E
-        uses: ./.github/actions/free-disk-space
-
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27'
           check-latest: true
           cache: true
+
+      - name: Verify environment branch policy and candidate bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ inputs.release_run_attempt }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -Eeuo pipefail
+          go run ./cmd/build/release check-environment release-qualification "${GITHUB_REF_NAME}"
+          if [[ -n "${RELEASE_RUN_ID}" || -n "${RELEASE_RUN_ATTEMPT}" ]]; then
+            bundle="${RUNNER_TEMP}/release-candidate"
+            go run ./cmd/build/release download "${RELEASE_RUN_ID}" "${RELEASE_RUN_ATTEMPT}" "${GITHUB_REF_NAME}" "${SOURCE_REF,,}" "${bundle}"
+            printf 'ACP_E2E_RELEASE_BUNDLE_DIR=%s\n' "${bundle}" >>"${GITHUB_ENV}"
+          fi
+
+      - name: Free disk space for Docker-heavy live E2E
+        uses: ./.github/actions/free-disk-space
 
       - name: Install kind
         uses: ./.github/actions/setup-kind
@@ -147,10 +180,11 @@ jobs:
           git --version
           gh --version
           jq --version
+          helm version
           kind version
           kubectl version --client=true
 
-      - name: Run destructive canonical ACP release gate in Kind
+      - name: Run release qualification in Kind
         id: gate
         # Leave time for failure evidence and cleanup before the job deadline.
         timeout-minutes: 210
@@ -159,18 +193,19 @@ jobs:
           ACP_E2E_KEEP_CLUSTER: "1"
           ACP_E2E_WRITE_CREDENTIAL_TOKEN: ${{ secrets.ACP_E2E_WRITE_CREDENTIAL_TOKEN }}
           ACP_E2E_WRITE_FORGE_CREDENTIAL_TOKEN: ${{ secrets.ACP_E2E_WRITE_FORGE_CREDENTIAL_TOKEN }}
-          ACP_E2E_WRITE_READ_CREDENTIAL_TOKEN: ${{ secrets.ACP_E2E_WRITE_READ_CREDENTIAL_TOKEN }}
+          # Source reads stay in this repository and use the job's temporary token.
+          ACP_E2E_WRITE_READ_CREDENTIAL_TOKEN: ${{ github.token }}
           ACP_E2E_WRITE_TARGET_READ_CREDENTIAL_TOKEN: ${{ secrets.ACP_E2E_WRITE_TARGET_READ_CREDENTIAL_TOKEN }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.ACP_E2E_WRITE_FORGE_CREDENTIAL_TOKEN }}
-        run: bash scripts/live-acp-runtime-kind-e2e.sh
+        run: bash scripts/agent-runtime-kind-e2e.sh
 
       - name: Upload evidence before cluster teardown
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: live-acp-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/live-acp-release-gate/acceptance.json
+          name: release-qualification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-qualification/acceptance.json
           if-no-files-found: error
           retention-days: 90
 
@@ -178,7 +213,7 @@ jobs:
         if: always() && steps.gate.outcome != 'skipped'
         run: |
           set -Eeuo pipefail
-          source scripts/lib/live-acp-runtime-kind-bootstrap.sh
+          source scripts/lib/agent-runtime-kind-bootstrap.sh
           if ! jq -e '.cluster.creationAttempted == true' "${ACP_E2E_REPORT_FILE}" >/dev/null; then
             exit 0
           fi
@@ -197,11 +232,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          if [[ ! -f scripts/lib/live-acp-release-report.sh ]]; then
+          if [[ ! -f scripts/lib/release-qualification-report.sh ]]; then
             echo "Candidate is not qualified: trusted checkout never completed." >&2
             exit 1
           fi
-          source scripts/lib/live-acp-release-report.sh
+          source scripts/lib/release-qualification-report.sh
           base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${ACP_E2E_WRITE_PR_BASE}" --jq '.sha')"
           # shellcheck disable=SC2016 # This is a jq program.
           acp_report_update '.observations.baseHeads.completion = $sha' --arg sha "${base_sha}"
@@ -211,7 +246,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: live-acp-release-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/live-acp-release-gate/acceptance.json
+          name: release-qualification-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-qualification/acceptance.json
           if-no-files-found: error
           retention-days: 90

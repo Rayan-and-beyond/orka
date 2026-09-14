@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016 # acp_report_update arguments are jq programs.
-# Source-only, allowlisted evidence for the deployed ACP publication gate.
+# Source-only, allowlisted evidence for release qualification.
 # Never persist Task prompts/results, messages, annotations, or Secret data.
 
 acp_report_enabled() {
@@ -43,7 +43,7 @@ acp_report_init() {
         | if test("^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
           then ascii_downcase else null end;
       {
-        schemaVersion: 1, gate: "live-acp-release-gate", mode: "release",
+        schemaVersion: 1, gate: "release-qualification", mode: "release",
         candidateSHA: ($candidate | sha), checkoutSHA: ($checkout | sha),
         sourceRepository: ($source | repo), publicationRepository: ($publication | repo),
         baseBranch: $base, expectedBranch: null, run: $run,
@@ -113,8 +113,10 @@ acp_report_qualified() {
     def sha: type == "string" and test("^[a-f0-9]{40}$");
     def digest: type == "string" and test("^sha256:[a-f0-9]{64}$");
     def present: type == "string" and length > 0;
+    def hash: type == "string" and test("^[a-f0-9]{64}$");
+    def run: type == "string" and test("^[1-9][0-9]*$");
     . as $r
-    | .schemaVersion == 1 and .gate == "live-acp-release-gate" and .mode == "release"
+    | .schemaVersion == 1 and .gate == "release-qualification" and .mode == "release"
       and (.candidateSHA | sha) and .candidateSHA == .checkoutSHA
       and .sourceRepository == "https://github.com/orka-agents/orka"
       and (.publicationRepository | present) and .publicationRepository != .sourceRepository
@@ -172,6 +174,23 @@ acp_report_qualified() {
       and .cleanup.validatorCredentials == "passed" and .cleanup.bootstrapCredentials == "passed"
       and .cleanup.cluster == "passed" and .cleanup.registry == "passed"
       and .preserved == null
+      and (if has("release") then
+        (.release.buildRunID | run) and (.release.buildRunAttempt | run)
+        and (.release.bundleSHA256 | hash) and (.release.version | present)
+        and (.chart.packageSHA256 | hash)
+        and .chart.install == true and .chart.containerTask == true
+        and .chart.recovery == true and .chart.noReplay == true
+        and .chart.oppositeModeRejected == true and .chart.jobRemovedBeforeRestart == true
+        and .chart.noReplayObservationSeconds >= 10
+        and (.chart.pvcs | length) == 2
+        and (.chart.pvcs | map(.name) | sort) == ["orka-store", "orka-workspace-publisher"]
+        and all(.chart.pvcs[]; (.uid | present) and (.volumeName | present) and .phase == "Bound")
+        and (.chart.controllerPodUIDBefore | present) and (.chart.controllerPodUIDAfter | present)
+        and .chart.controllerPodUIDBefore != .chart.controllerPodUIDAfter
+        and (.chart.task.uid | present) and .chart.task.phase == "Succeeded"
+        and .chart.task.attempts == 1 and .chart.task.resultAvailable == true
+        and (.chart.task.jobUID | present)
+      else true end)
   ' "$1" >/dev/null
 }
 
@@ -181,7 +200,7 @@ acp_report_finish() {
   if acp_report_qualified "${ACP_E2E_REPORT_FILE}"; then
     acp_report_update '.result = "qualified"'
   else
-    printf '%s\n' 'ACP release candidate is not qualified; inspect acceptance.json.' >&2
+    printf '%s\n' 'Release candidate is not qualified; inspect acceptance.json.' >&2
     return 1
   fi
 }

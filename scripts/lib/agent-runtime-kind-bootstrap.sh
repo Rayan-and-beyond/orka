@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016 # acp_report_update arguments are jq programs.
-# Shared, source-only bootstrap for the live ACP runtime validator on Kind.
+# Shared, source-only bootstrap for the agent runtime validator on Kind.
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  echo "error: source scripts/lib/live-acp-runtime-kind-bootstrap.sh; do not execute it directly" >&2
+  echo "error: source scripts/lib/agent-runtime-kind-bootstrap.sh; do not execute it directly" >&2
   exit 2
 fi
 
 live_acp_kind_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/e2e-admission-tls.sh
 . "${live_acp_kind_lib_dir}/e2e-admission-tls.sh"
-# shellcheck source=scripts/lib/live-acp-release-report.sh
-. "${live_acp_kind_lib_dir}/live-acp-release-report.sh"
+# shellcheck source=scripts/lib/release-qualification-report.sh
+. "${live_acp_kind_lib_dir}/release-qualification-report.sh"
+# shellcheck source=scripts/lib/release-chart-acceptance.sh
+. "${live_acp_kind_lib_dir}/release-chart-acceptance.sh"
 unset live_acp_kind_lib_dir
 
 # Internal port-forward state is process-local. Reset inherited values so a
@@ -54,6 +56,13 @@ live_acp_kind_preflight() {
   for command in curl docker git go jq kind kubectl make openssl python3; do
     live_acp_kind_require_cmd "${command}" || return 1
   done
+  if [[ -n "${LIVE_ACP_RELEASE_BUNDLE_DIR:-}" ]]; then
+    live_acp_kind_require_cmd helm || return 1
+    live_acp_kind_enabled "${RELEASE_GATE:-0}" || live_acp_kind_die "a release bundle requires RELEASE_GATE=1" || return 1
+    go -C "${LIVE_ACP_REPO_ROOT}" run ./cmd/build/release check-bundle "${LIVE_ACP_RELEASE_BUNDLE_DIR}" || return 1
+    jq -e --arg sha "$(git -C "${LIVE_ACP_REPO_ROOT}" rev-parse HEAD)" \
+      '.candidateSHA == $sha' "${LIVE_ACP_RELEASE_BUNDLE_DIR}/candidate.json" >/dev/null || return 1
+  fi
   if live_acp_kind_enabled "${RELEASE_GATE:-0}"; then
     live_acp_kind_require_cmd gh || return 1
     local token_var
@@ -80,7 +89,7 @@ live_acp_kind_preflight() {
   fi
   [[ -x "${LIVE_ACP_KINDCTL_BIN}" ]] || live_acp_kind_die "kindctl is not executable: ${LIVE_ACP_KINDCTL_BIN}" || return 1
   [[ -x "${LIVE_ACP_VEKIL_DEPLOY_SCRIPT}" ]] || live_acp_kind_die "Vekil deploy script is not executable: ${LIVE_ACP_VEKIL_DEPLOY_SCRIPT}" || return 1
-  [[ -x "${LIVE_ACP_VALIDATOR_SCRIPT}" ]] || live_acp_kind_die "live ACP validator is not executable: ${LIVE_ACP_VALIDATOR_SCRIPT}" || return 1
+  [[ -x "${LIVE_ACP_VALIDATOR_SCRIPT}" ]] || live_acp_kind_die "agent runtime validator is not executable: ${LIVE_ACP_VALIDATOR_SCRIPT}" || return 1
   if [[ -n "${LIVE_ACP_VEKIL_LOCAL_IMAGE:-}" ]]; then
     # A locally built Vekil is published through the run's own registry and
     # digest-pinned there, so development builds stay immutable end to end.
@@ -161,6 +170,27 @@ live_acp_kind_build_and_publish_images() {
   LIVE_ACP_GENERAL_WORKER_REF="$(orka_kind_registry_push "${LIVE_ACP_GENERAL_WORKER_IMAGE}" orka/general-worker)"
   export LIVE_ACP_CONTROLLER_REF LIVE_ACP_CODEX_REF LIVE_ACP_CLAUDE_REF LIVE_ACP_COPILOT_REF
   export LIVE_ACP_OPENCODE_REF LIVE_ACP_PUBLISHER_REF LIVE_ACP_GENERAL_WORKER_REF
+  live_acp_kind_report_images
+}
+
+# Release candidates use the already built GHCR digests. Rebuilding here would
+# qualify different bytes from the images awaiting release approval.
+live_acp_kind_use_release_images() {
+  local manifest="${LIVE_ACP_RELEASE_BUNDLE_DIR}/candidate.json"
+  go -C "${LIVE_ACP_REPO_ROOT}" run ./cmd/build/release check-bundle "${LIVE_ACP_RELEASE_BUNDLE_DIR}" || return 1
+  LIVE_ACP_CONTROLLER_REF="$(jq -er '.images.controller' "${manifest}")"
+  LIVE_ACP_CODEX_REF="$(jq -er '.images["acp-codex-runtime"]' "${manifest}")"
+  LIVE_ACP_CLAUDE_REF="$(jq -er '.images["acp-claude-runtime"]' "${manifest}")"
+  LIVE_ACP_COPILOT_REF="$(jq -er '.images["acp-copilot-runtime"]' "${manifest}")"
+  LIVE_ACP_OPENCODE_REF="$(jq -er '.images["acp-opencode-runtime"]' "${manifest}")"
+  LIVE_ACP_PUBLISHER_REF="$(jq -er '.images["workspace-publisher"]' "${manifest}")"
+  LIVE_ACP_GENERAL_WORKER_REF="$(jq -er '.images["general-worker"]' "${manifest}")"
+  export LIVE_ACP_CONTROLLER_REF LIVE_ACP_CODEX_REF LIVE_ACP_CLAUDE_REF LIVE_ACP_COPILOT_REF
+  export LIVE_ACP_OPENCODE_REF LIVE_ACP_PUBLISHER_REF LIVE_ACP_GENERAL_WORKER_REF
+  live_acp_kind_report_images
+}
+
+live_acp_kind_report_images() {
   acp_report_update '.builtImages = {controller:$controller, publisher:$publisher,
     codex:$codex, claude:$claude, copilot:$copilot, opencode:$opencode}' \
     --arg controller "${LIVE_ACP_CONTROLLER_REF}" --arg publisher "${LIVE_ACP_PUBLISHER_REF}" \
@@ -305,7 +335,7 @@ live_acp_kind_probe_vekil_wire_path() {
   local provider="$1"
   local model="$2"
   local endpoint="$3"
-  local payload payload_file response_file error_file url http_code probe_value="live-acp-preflight"
+  local payload payload_file response_file error_file url http_code probe_value="agent-runtime-preflight"
   local authorization_header="Authori""zation" api_key_header="x-api-""key"
   local -a headers
 
@@ -440,7 +470,7 @@ live_acp_kind_deploy_vekil() {
     --name vekil \
     --image "${LIVE_ACP_VEKIL_IMAGE}" \
     --image-pull-policy IfNotPresent \
-    --create-copilot-token-secret live-acp-runtime-copilot:token \
+    --create-copilot-token-secret agent-runtime-copilot:token \
     --timeout "${LIVE_ACP_ROLLOUT_TIMEOUT}"
 
   local models_file="${LIVE_ACP_SECRET_DIR}/vekil-models.json"
@@ -493,10 +523,10 @@ live_acp_kind_create_release_credentials() {
     ACP_E2E_WRITE_FORGE_CREDENTIAL_TOKEN
   )
   local -a secret_names=(
-    live-acp-source-read
-    live-acp-target-read
-    live-acp-target-write
-    live-acp-forge
+    release-source-read
+    release-target-read
+    release-target-write
+    release-forge
   )
 
   live_acp_kind_log "Creating four role-separated release-gate credential Secrets"
@@ -527,8 +557,13 @@ live_acp_kind_bootstrap() {
   live_acp_kind_create_cluster
   live_acp_kind_start_registry
   live_acp_kind_deploy_vekil
-  live_acp_kind_build_and_publish_images
-  live_acp_kind_deploy_orka
+  if [[ -n "${LIVE_ACP_RELEASE_BUNDLE_DIR:-}" ]]; then
+    live_acp_kind_use_release_images
+    live_acp_kind_deploy_release_chart
+  else
+    live_acp_kind_build_and_publish_images
+    live_acp_kind_deploy_orka
+  fi
   live_acp_kind_create_release_credentials
 }
 
@@ -571,7 +606,7 @@ live_acp_kind_delete_cluster() {
     # A timeout can kill the validator before its EXIT trap records preservation.
     # Once it was launched, require positive evidence of safe remote cleanup.
     if ! jq -e '
-        .schemaVersion == 1 and .gate == "live-acp-release-gate" and .mode == "release"
+        .schemaVersion == 1 and .gate == "release-qualification" and .mode == "release"
         and has("task") and has("preserved") and .preserved == null
         and ((.validatorStarted == false and .task == null) or (.validatorStarted == true
           and (.cleanup.remote == "passed" or (.cleanup.remote == "not_required" and .task == null))))
