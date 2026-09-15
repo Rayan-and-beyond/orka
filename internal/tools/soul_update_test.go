@@ -23,7 +23,7 @@ func (c *publishDuringAgentRead) Get(ctx context.Context, key client.ObjectKey, 
 		c.published = true
 		published := agent.DeepCopy()
 		published.Spec.Soul = &corev1alpha1.SoulSource{Inline: "reviewed persona"}
-		if err := c.Client.Update(ctx, published); err != nil {
+		if err := c.Update(ctx, published); err != nil {
 			return err
 		}
 	}

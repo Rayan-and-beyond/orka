@@ -184,7 +184,7 @@ func validateSoulRuntime(agent *corev1alpha1.Agent) error {
 	}
 	runtime := agent.Spec.Runtime
 	if runtime.RuntimeRef != nil || !isBuiltInACPProviderRuntime(runtime.Type) || runtime.ContractVersion == nil || *runtime.ContractVersion != corev1alpha1.AgentRuntimeContractHarnessV2 {
-		return fmt.Errorf("Agent.spec.soul requires an AI worker or a built-in harness v2 runtime")
+		return fmt.Errorf("agent.spec.soul requires an AI worker or a built-in harness v2 runtime")
 	}
 	return nil
 }
