@@ -43,6 +43,10 @@ const (
 	agentReasoningEffortMax    = "max"
 )
 
+// Revisit both ready and invalid ConfigMap-backed OpenCode Agents without
+// requiring an unrelated Agent/Task event or broader ConfigMap watch access.
+const openCodeConfigMapPromptRefreshInterval = 30 * time.Second
+
 // +kubebuilder:rbac:groups=core.orka.ai,resources=agents,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core.orka.ai,resources=agents/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core.orka.ai,resources=agents/finalizers,verbs=update
@@ -82,8 +86,18 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return result, nil
 	}
 
-	// Update status
-	return r.updateStatus(ctx, agent, activeTasks, validationErr)
+	// Update status and retain any earlier TTL deadline.
+	result, err := r.updateStatus(ctx, agent, activeTasks, validationErr)
+	if err != nil {
+		return result, err
+	}
+	if agent.Spec.Runtime != nil && agent.Spec.Runtime.Type == corev1alpha1.AgentRuntimeOpencode &&
+		agent.BuiltInContractVersion() == corev1alpha1.AgentRuntimeContractHarnessV2 &&
+		agent.Spec.SystemPrompt != nil && agent.Spec.SystemPrompt.ConfigMapRef != nil &&
+		(result.RequeueAfter == 0 || result.RequeueAfter > openCodeConfigMapPromptRefreshInterval) {
+		result.RequeueAfter = openCodeConfigMapPromptRefreshInterval
+	}
+	return result, nil
 }
 
 // validateAgent validates the Agent's referenced resources exist and config is coherent.
