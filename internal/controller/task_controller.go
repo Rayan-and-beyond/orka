@@ -3147,8 +3147,9 @@ func validatePlannedRuntimeRefAgentTaskRestrictions(
 	agent *corev1alpha1.Agent,
 	plan agentExecutionPlan,
 ) error {
-	if agent != nil && agent.Spec.Runtime != nil && agent.Spec.Runtime.RuntimeRef != nil && agent.Spec.Soul != nil {
-		return fmt.Errorf("runtimeRef runtimes do not support Agent.spec.soul")
+	// Soul compatibility applies to every new Agent Task path, not only runtimeRef.
+	if err := validateSoulRuntime(agent); err != nil {
+		return err
 	}
 	// planAgentExecution resolves runtimeRef before selecting the external path,
 	// so these v2-only checks cannot change harness v1 compatibility.
