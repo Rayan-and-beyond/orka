@@ -51,9 +51,15 @@ func acpMCPApprovalIdentity(request harnessv2.MCPBrokerCallRequest) string {
 	// Bind the transport call ID independently of its proposed arguments. A
 	// changed payload with the same call identity conflicts instead of silently
 	// creating a second review. Different genuine calls always need a new review.
-	return store.CanonicalControlID("acp-tool-approval", request.Namespace,
+	return acpMCPApprovalIdentityFromCallDigest(request.Namespace,
 		string(request.Metadata.TaskUID), fmt.Sprint(request.Metadata.TaskAttempt),
-		string(request.Metadata.PromptID), request.Call.CallID)
+		string(request.Metadata.PromptID), store.CanonicalBytesDigest([]byte(request.Call.CallID)))
+}
+
+func acpMCPApprovalIdentityFromCallDigest(namespace, taskUID, taskAttempt, promptID, callIDDigest string) string {
+	// The digest survives event redaction even when the call ID contains a URL
+	// query or other sensitive text. A distinct domain separates legacy raw IDs.
+	return store.CanonicalControlID("acp-tool-approval-v2", namespace, taskUID, taskAttempt, promptID, callIDDigest)
 }
 
 func acpMCPApprovalRequestDigest(request harnessv2.MCPBrokerCallRequest, descriptor harnessv2.MCPToolDescriptor) (string, error) {
@@ -185,6 +191,7 @@ func approvalCallBinding(call *acpMCPApprovalCall) *approvals.CallBinding {
 	m := call.Request.Metadata
 	return &approvals.CallBinding{
 		TaskAttempt: m.TaskAttempt, PromptID: string(m.PromptID), OperationID: string(m.OperationID),
+		CallIDDigest:      store.CanonicalBytesDigest([]byte(call.Request.Call.CallID)),
 		RuntimeSessionUID: string(m.Fence.RuntimeSessionUID), RuntimeSessionGeneration: m.Fence.RuntimeSessionGeneration,
 		RuntimeInstanceID: string(m.Fence.RuntimeInstanceID), SupervisorBootID: string(m.Fence.SupervisorBootID),
 		ControllerEpoch: m.Fence.ControllerEpoch, RequestDigest: call.RequestDigest,

@@ -15,7 +15,6 @@ import (
 	corev1alpha1 "github.com/orka-agents/orka/api/v1alpha1"
 	"github.com/orka-agents/orka/internal/approvals"
 	"github.com/orka-agents/orka/internal/events"
-	harnessv2 "github.com/orka-agents/orka/internal/harness/v2"
 	"github.com/orka-agents/orka/internal/store"
 )
 
@@ -282,13 +281,19 @@ func mcpApprovalRecoveryIdentity(task *corev1alpha1.Task, approval approvals.App
 		approval.ToolCallID == "" || store.ValidateCanonicalDigest("approval request digest", binding.RequestDigest) != nil {
 		return store.ExternalEffectIdentity{}, false
 	}
-	expected := acpMCPApprovalIdentity(harnessv2.MCPBrokerCallRequest{
-		Namespace: task.Namespace,
-		Metadata: harnessv2.MutationMetadata{
-			TaskUID: harnessv2.TaskUID(task.UID), TaskAttempt: binding.TaskAttempt, PromptID: harnessv2.PromptID(binding.PromptID),
-		},
-		Call: harnessv2.MCPToolCall{CallID: approval.ToolCallID},
-	})
+	var expected string
+	if binding.CallIDDigest == "" {
+		// Legacy events have no safe call-ID digest. Recover them only when the
+		// persisted raw ID still proves the original approval identity.
+		expected = store.CanonicalControlID("acp-tool-approval", task.Namespace, string(task.UID),
+			fmt.Sprint(binding.TaskAttempt), binding.PromptID, approval.ToolCallID)
+	} else {
+		if store.ValidateCanonicalDigest("approval call ID digest", binding.CallIDDigest) != nil {
+			return store.ExternalEffectIdentity{}, false
+		}
+		expected = acpMCPApprovalIdentityFromCallDigest(task.Namespace, string(task.UID),
+			fmt.Sprint(binding.TaskAttempt), binding.PromptID, binding.CallIDDigest)
+	}
 	return store.ExternalEffectIdentity{
 		Kind: acpMCPToolEffectKind, Namespace: task.Namespace,
 		AggregateID: binding.RuntimeSessionUID, OperationID: binding.OperationID,

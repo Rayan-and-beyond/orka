@@ -257,6 +257,117 @@ func TestMCPApprovalRecoveryProjectsPersistedExecutionAfterRestart(t *testing.T)
 	}
 }
 
+func TestMCPApprovalRecoveryPreservesRedactedCallIdentity(t *testing.T) {
+	f := newMCPApprovalRecoveryFixture(t)
+	for i, state := range []store.ExternalEffectState{store.ExternalEffectSucceeded, store.ExternalEffectPending} {
+		f.request.Call.CallID = fmt.Sprintf("https://tools.example/call?request=%d#step", i)
+		f.request.Metadata.OperationID = harnessv2.OperationID(fmt.Sprintf("operation-%d", i))
+		var err error
+		f.request.Metadata.RequestDigest, err = harnessv2.CanonicalRequestDigest(f.request)
+		require.NoError(t, err)
+		executed := state == store.ExternalEffectSucceeded
+		prior := ""
+		if executed {
+			prior = "running"
+		}
+		f.seed(t, state, prior, executed, json.RawMessage(`{"workOrder":"simulated-1"}`))
+	}
+	listed, err := approvals.ListEvents(f.ctx, f.events, f.task.Namespace, f.task.Name)
+	require.NoError(t, err)
+	before := approvals.Derive(listed, time.Time{})
+	require.Len(t, before, 2)
+	require.Equal(t, before[0].ToolCallID, before[1].ToolCallID, "distinct calls have identical redacted display text")
+	require.NotEqual(t, before[0].ID, before[1].ID)
+	require.NotEqual(t, before[0].Binding.CallIDDigest, before[1].Binding.CallIDDigest)
+	for _, event := range listed {
+		require.NotContains(t, string(event.Content), "?request=")
+		require.NotContains(t, string(event.Content), "#step")
+	}
+	f.restart(t)
+	require.NoError(t, f.reconcile(t))
+	listed, err = approvals.ListEvents(f.ctx, f.events, f.task.Namespace, f.task.Name)
+	require.NoError(t, err)
+	after := approvals.Derive(listed, time.Time{})
+	require.Len(t, after, 2)
+	require.Equal(t, before[0].ID, after[0].ID)
+	require.Equal(t, "succeeded", after[0].ExecutionOutcome)
+	require.Equal(t, before[1].ID, after[1].ID)
+	require.Equal(t, "not_started", after[1].ExecutionOutcome)
+	require.Equal(t, acpApprovalCodeStale, after[1].ExecutionReason)
+	require.EqualValues(t, 1, f.count.Load(), "recovery must neither repeat the completed call nor start the pending call")
+	require.Zero(t, f.secretReads.Load(), "recovery must not read the original executable requests")
+}
+
+func TestMCPApprovalRecoveryValidatesPersistedCallBinding(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		legacy  bool
+		mutate  func(*approvals.CallBinding)
+		recover bool
+	}{
+		{name: "digest", recover: true},
+		{name: "missing_digest", mutate: func(b *approvals.CallBinding) { b.CallIDDigest = "" }},
+		{name: "malformed_digest", mutate: func(b *approvals.CallBinding) { b.CallIDDigest = "sha256:abc" }},
+		{name: "noncanonical_digest", mutate: func(b *approvals.CallBinding) { b.CallIDDigest = strings.ToUpper(b.CallIDDigest) }},
+		{name: "different_digest", mutate: func(b *approvals.CallBinding) { b.CallIDDigest = testControllerMCPDigest("another call") }},
+		{name: "different_attempt", mutate: func(b *approvals.CallBinding) { b.TaskAttempt++ }},
+		{name: "different_prompt", mutate: func(b *approvals.CallBinding) { b.PromptID = "another-prompt" }},
+		{name: "legacy_without_digest", legacy: true, recover: true},
+		{name: "legacy_malformed_digest", legacy: true, mutate: func(b *approvals.CallBinding) { b.CallIDDigest = "sha256:abc" }},
+		{name: "legacy_with_digest", legacy: true, mutate: func(b *approvals.CallBinding) { b.CallIDDigest = testControllerMCPDigest("another call") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newMCPApprovalRecoveryFixture(t)
+			call, _ := f.seed(t, store.ExternalEffectSucceeded, "running", true, json.RawMessage(`{"workOrder":"simulated-1"}`))
+			_, listed := f.approval(t)
+			approvalID := call.ID
+			if tc.legacy {
+				approvalID = store.CanonicalControlID("acp-tool-approval", f.task.Namespace, string(f.task.UID),
+					fmt.Sprint(f.request.Metadata.TaskAttempt), string(f.request.Metadata.PromptID), f.request.Call.CallID)
+			}
+			// Rebuild the saved history to model old or damaged event bindings.
+			// The completed effect and its immutable request digest stay intact.
+			require.NoError(t, f.events.DeleteExecutionEvents(f.ctx, f.task.Namespace, events.ExecutionEventStreamTypeTask, f.task.Name))
+			for _, event := range listed {
+				var payload map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(event.Content, &payload))
+				payload["approvalID"], _ = json.Marshal(approvalID)
+				if event.Type == events.ExecutionEventTypeApprovalRequested {
+					var binding approvals.CallBinding
+					require.NoError(t, json.Unmarshal(payload["binding"], &binding))
+					if tc.legacy {
+						binding.CallIDDigest = ""
+					}
+					if tc.mutate != nil {
+						tc.mutate(&binding)
+					}
+					payload["binding"], _ = json.Marshal(binding)
+				}
+				var err error
+				event.Content, err = json.Marshal(payload)
+				require.NoError(t, err)
+				event.ToolCallID = approvalID
+				_, err = f.events.AppendExecutionEvent(f.ctx, &event)
+				require.NoError(t, err)
+			}
+			before, _ := f.approval(t)
+			require.Equal(t, "running", before.ExecutionOutcome)
+			f.restart(t)
+			require.NoError(t, f.reconcile(t))
+			after, afterEvents := f.approval(t)
+			require.Equal(t, approvalID, after.ID)
+			if tc.recover {
+				require.Equal(t, "succeeded", after.ExecutionOutcome)
+			} else {
+				require.Equal(t, before, after, "invalid bindings must not inherit the saved receipt")
+				require.Len(t, afterEvents, len(listed))
+			}
+			require.EqualValues(t, 1, f.count.Load())
+			require.Zero(t, f.secretReads.Load())
+		})
+	}
+}
+
 type approvalLostOutcomeEventStore struct {
 	store.DeduplicatingExecutionEventStore
 	lost atomic.Bool

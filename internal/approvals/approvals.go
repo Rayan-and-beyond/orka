@@ -50,6 +50,7 @@ type Approval struct {
 type CallBinding struct {
 	TaskAttempt              uint32 `json:"taskAttempt"`
 	PromptID                 string `json:"promptID"`
+	CallIDDigest             string `json:"callIDDigest,omitempty"`
 	OperationID              string `json:"operationID"`
 	RuntimeSessionUID        string `json:"runtimeSessionUID"`
 	RuntimeSessionGeneration uint64 `json:"runtimeSessionGeneration"`
