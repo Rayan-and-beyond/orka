@@ -140,22 +140,19 @@ func FullNativeToolPermissionAllowed(provider, name string) bool {
 	if strings.TrimSpace(name) != name || name == "" {
 		return false
 	}
-	if provider == "claude" && claudeNativeToolIdentifier(name) {
+	if provider == "claude" {
+		// Claude Code 2.1.217 / SDK 0.3.217 native tools beyond the shared
+		// policy names. New names need review when the pinned runner changes.
 		switch name {
-		case "Agent", "Task", "TaskOutput", "TaskStop", "Workflow", "Monitor",
-			"CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "RemoteTrigger",
-			"PushNotification", "Artifact", "EnterWorktree", "ExitWorktree", "Skill",
-			"AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "RequestPermission", "RequestPermissions":
-			return false
-		default:
+		case "NotebookEdit", "TodoWrite", "TaskCreate", "TaskGet", "TaskUpdate", "TaskList", "ReportFindings":
 			return true
 		}
 	}
 	return isPolicyNativeTool(provider, name)
 }
 
-// The pinned Claude ACP adapter emits native PascalCase names as structured
-// metadata, and MCP identities as mcp__server__tool. Titles are never authority.
+// claudeNativeToolIdentifier conservatively recognizes native-shaped restrictions.
+// It must not authorize permission requests, which require an approved tool name.
 func claudeNativeToolIdentifier(name string) bool {
 	if len(name) == 0 || len(name) > 253 || name[0] < 'A' || name[0] > 'Z' {
 		return false

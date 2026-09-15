@@ -16,11 +16,11 @@ func TestNativeToolPolicyDoesNotBroadenLegacyDefaults(t *testing.T) {
 }
 
 func TestFullNativeToolPermissionKeepsNativeAndBrokeredNamesSeparate(t *testing.T) {
-	for _, name := range []string{"Read", "NotebookEdit", "TaskCreate", "TaskGet", "TaskUpdate", "TaskList", "TodoWrite"} {
+	for _, name := range []string{"Read", "NotebookEdit", "TaskCreate", "TaskGet", "TaskUpdate", "TaskList", "TodoWrite", "ReportFindings"} {
 		require.True(t, FullNativeToolPermissionAllowed("claude", name), name)
 	}
 	for _, provider := range []string{"claude", "codex", "copilot", "opencode"} {
-		for _, name := range []string{"", " Bash ", "delegate_task", "mcp__orka__delegate_task", "mcp__other__Read", "orca_Read",
+		for _, name := range []string{"", " Bash ", "DeleteEverything", "delegate_task", "mcp__orka__delegate_task", "mcp__other__Read", "orca_Read",
 			"Agent", "Task", "TaskStop", "CronCreate", "ScheduleWakeup", "RemoteTrigger", "AskUserQuestion", "RequestPermissions", "Skill", "external_directory"} {
 			require.False(t, FullNativeToolPermissionAllowed(provider, name), provider+"/"+name)
 		}

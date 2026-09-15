@@ -47,6 +47,7 @@ func TestResolvePermissionEnforcesNativeToolPolicy(t *testing.T) {
 		{name: "full native reusable permission denied", toolName: providerToolWebSearch, full: true, kind: harnessv2.PermissionOptionAllowAlways},
 		{name: "full missing structured identity", full: true},
 		{name: "full unknown permission", toolName: "unknown", full: true},
+		{name: "full Claude unknown PascalCase permission", toolName: "DeleteEverything", provider: providerKindClaude, full: true},
 		{name: "full explicit native denial", toolName: providerToolWebSearch, full: true, disallowed: true},
 		{name: "full Claude helper denied", toolName: "Agent", provider: providerKindClaude, full: true},
 		{name: "full Claude background schedule denied", toolName: "CronCreate", provider: providerKindClaude, full: true},

@@ -170,11 +170,11 @@ go test ./internal/acp ./internal/harness/v2 ./internal/controller \
 
 The opt-in
 [`TestOpenCodeNativeTools`](https://github.com/orka-agents/orka/blob/main/workers/acp/supervisor/native_tools_integration_test.go)
-runs the exact, unmodified OpenCode binary with production session
-configuration and the provider proxy. A local Chat Completions fixture
-requests the native tools and checks their results. Search calls the public
-Exa service when explicitly enabled. It does not use model-provider account
-credentials.
+runs a caller-supplied OpenCode executable matching the pinned version with
+production session configuration and the provider proxy. A local Chat
+Completions fixture requests the native tools and checks their results. Search
+calls the public Exa service when explicitly enabled. It does not use
+model-provider account credentials.
 
 ```bash
 ORKA_TEST_OPENCODE_BIN=/absolute/path/to/opencode \
@@ -182,9 +182,11 @@ ORKA_TEST_OPENCODE_SEARCH=1 \
 go test ./workers/acp/supervisor -run '^TestOpenCodeNativeTools$' -count=1 -v
 ```
 
-Without `ORKA_TEST_OPENCODE_BIN`, the test skips. It rejects a binary version
-other than `1.18.9`. Without `ORKA_TEST_OPENCODE_SEARCH=1`, the public search
-case skips.
+Without `ORKA_TEST_OPENCODE_BIN`, the test skips. It rejects a reported version
+other than `1.18.9`, but does not verify artifact authenticity. Verify the
+executable's checksum against the official release before using a run as
+qualification evidence. Without `ORKA_TEST_OPENCODE_SEARCH=1`, the public
+search case skips.
 
 | Execution check | Evidence for this change |
 | --- | --- |

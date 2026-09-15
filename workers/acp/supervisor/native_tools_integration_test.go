@@ -26,11 +26,12 @@ import (
 
 const nativeToolMarker = "orka-native-tool-observed-592"
 
-// TestOpenCodeNativeTools runs the pinned, unmodified runner with the production
-// session projection and provider proxy. All inference comes from a local
-// deterministic Chat Completions fixture. Set ORKA_TEST_OPENCODE_BIN to the
-// pinned executable to opt in; ORKA_TEST_OPENCODE_SEARCH=1 also exercises the
-// public Exa search service, without forwarding any local account credentials.
+// TestOpenCodeNativeTools runs a caller-supplied executable matching the pinned
+// version with the production session projection and provider proxy. The test
+// checks --version, not artifact authenticity. All inference comes from a local
+// deterministic Chat Completions fixture. Set ORKA_TEST_OPENCODE_BIN to opt in;
+// ORKA_TEST_OPENCODE_SEARCH=1 also exercises the public Exa search service,
+// without forwarding any local account credentials.
 // This host-level test proves native calls, results, denial, and cancellation.
 // Linux UID isolation and Kubernetes egress enforcement need separate validation.
 func TestOpenCodeNativeTools(t *testing.T) {
