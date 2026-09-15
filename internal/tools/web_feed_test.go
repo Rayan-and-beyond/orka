@@ -448,11 +448,8 @@ func TestWebFetchFeedItemLimitReportsOmissionAndValidatesTail(t *testing.T) {
 
 func TestWebFetchFeedBodyLimitAndBrokerSerializationBound(t *testing.T) {
 	prefix, suffix := `<rss version="2.0"><channel><description>`, `</description></channel></rss>`
-	for _, extra := range []int{-3, 0, 1, 100} {
+	for _, extra := range []int{1, 100} {
 		body := prefix + strings.Repeat("x", maxBodySize-len(prefix)-len(suffix)+extra) + suffix
-		if extra == -3 {
-			body = "\xef\xbb\xbf" + body // The BOM still counts toward the read ceiling.
-		}
 		tool, base := serveWebFeed(t, body, "application/rss+xml")
 		args, _ := json.Marshal(WebFetchArgs{URL: base})
 		if output, err := tool.Execute(context.Background(), args); output != "" || err == nil {
@@ -466,5 +463,42 @@ func TestWebFetchFeedBodyLimitAndBrokerSerializationBound(t *testing.T) {
 	result, output := executeWebFeed(t, tool, WebFetchArgs{URL: requestURL, MaxChars: brokeredWebFetchMaxChars})
 	if len(output) > harnessv2.MaxMCPResultBytes || result.Length != brokeredWebFetchMaxChars || !result.Truncated {
 		t.Fatalf("brokered bound violated: bytes=%d length=%d truncated=%v", len(output), result.Length, result.Truncated)
+	}
+}
+
+func TestWebFetchFeedAcceptsExactByteLimitOnlyAtEOF(t *testing.T) {
+	for _, format := range []struct{ name, prefix, suffix, extractor string }{
+		{"rss", `<rss version="2.0"><channel><title>Exact</title>`, `</channel></rss>`, "rss_feed"},
+		{"atom", `<feed xmlns="http://www.w3.org/2005/Atom"><title>Exact</title>`, `</feed>`, "atom_feed"},
+	} {
+		for _, bom := range []string{"", "\xef\xbb\xbf"} {
+			t.Run(fmt.Sprintf("%s/bom=%t", format.name, bom != ""), func(t *testing.T) {
+				body := bom + format.prefix + strings.Repeat(" ", maxBodySize-len(bom)-len(format.prefix)-len(format.suffix)) + format.suffix
+				tool, base := serveWebFeed(t, body, "application/xml")
+				result, _ := executeWebFeed(t, tool, WebFetchArgs{URL: base})
+				if result.Extractor != format.extractor || result.Truncated {
+					t.Fatalf("complete exact-limit feed was not preserved: extractor=%s truncated=%t", result.Extractor, result.Truncated)
+				}
+				assertWebFeedContains(t, result.Content, "feed: Exact", "No items in feed.")
+				// The same complete prefix must not hide additional response data.
+				tooLarge, largeURL := serveWebFeed(t, body+" ", "application/xml")
+				input, err := json.Marshal(WebFetchArgs{URL: largeURL})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if output, err := tooLarge.Execute(t.Context(), input); err == nil || output != "" {
+					t.Fatal("response past the byte cap was accepted as a complete feed")
+				}
+			})
+		}
+	}
+}
+
+func TestWebFetchBodyOverflowReportsOmissionAfterHTMLExtraction(t *testing.T) {
+	body := "<p>Visible</p>" + strings.Repeat(" ", maxBodySize)
+	tool, base := serveWebFeed(t, body, "text/html")
+	result, _ := executeWebFeed(t, tool, WebFetchArgs{URL: base})
+	if result.Content != "Visible" || result.Extractor != "html_text" || !result.Truncated {
+		t.Fatalf("physical response truncation was not reported: %+v", result)
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/orka-agents/orka/api/v1alpha1"
+	"github.com/orka-agents/orka/internal/acp"
 )
 
 // AgentReconciler reconciles a Agent object
@@ -295,8 +296,15 @@ func (r *AgentReconciler) validateSystemPromptConfigMap(ctx context.Context, age
 		}
 		return fmt.Errorf("failed to get systemPrompt ConfigMap %q: %w", agent.Spec.SystemPrompt.ConfigMapRef.Name, err)
 	}
-	if _, ok := cm.Data[agent.Spec.SystemPrompt.ConfigMapRef.Key]; !ok {
+	prompt, ok := cm.Data[agent.Spec.SystemPrompt.ConfigMapRef.Key]
+	if !ok {
 		return fmt.Errorf("key %q not found in systemPrompt ConfigMap %q", agent.Spec.SystemPrompt.ConfigMapRef.Key, agent.Spec.SystemPrompt.ConfigMapRef.Name)
+	}
+	if agent.Spec.Runtime != nil && agent.Spec.Runtime.Type == corev1alpha1.AgentRuntimeOpencode &&
+		agent.BuiltInContractVersion() == corev1alpha1.AgentRuntimeContractHarnessV2 {
+		if err := acp.ValidateOpenCodeSystemPrompt(prompt); err != nil {
+			return fmt.Errorf("systemPrompt ConfigMap %q key %q: %w", agent.Spec.SystemPrompt.ConfigMapRef.Name, agent.Spec.SystemPrompt.ConfigMapRef.Key, err)
+		}
 	}
 	return nil
 }

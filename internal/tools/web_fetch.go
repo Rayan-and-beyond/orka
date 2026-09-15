@@ -188,10 +188,12 @@ func (t *WebFetchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
+	// The extra byte distinguishes an exact-limit EOF from a clipped response.
+	bodyLimitExceeded := len(body) > maxBodySize
 
 	// Record completion of this retrieval using the server clock, never a
 	// response Date header, feed field, or caller-supplied argument.
@@ -221,6 +223,9 @@ func (t *WebFetchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		}
 	}
 	if extractor == "" {
+		if bodyLimitExceeded {
+			body = body[:maxBodySize] // Retain the existing non-feed/raw byte cap.
+		}
 		switch {
 		case strings.Contains(contentType, "application/json"):
 			content, extractor = t.extractJSON(body)
@@ -240,7 +245,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		Status:    resp.StatusCode,
 		Content:   content,
 		Length:    contentLength,
-		Truncated: truncated || feedOmitted,
+		Truncated: truncated || feedOmitted || bodyLimitExceeded,
 		Extractor: extractor,
 	}
 

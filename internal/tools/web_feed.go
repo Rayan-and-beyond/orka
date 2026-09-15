@@ -54,7 +54,7 @@ type webFeed struct {
 func extractWebFeed(body []byte, contentType string, base *url.URL, allowPrivate bool, retrievedAt time.Time) (content, extractor string, omitted bool, err error) {
 	mediaType, _, _ := mime.ParseMediaType(contentType)
 	expectedFeed := mediaType == "application/rss+xml" || mediaType == "application/atom+xml"
-	atReadLimit := len(body) >= maxBodySize
+	bodyLimitExceeded := len(body) > maxBodySize
 	body = bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))
 	decoder := xml.NewDecoder(bytes.NewReader(body))
 	var root xml.StartElement
@@ -99,9 +99,9 @@ func extractWebFeed(body []byte, contentType string, base *url.URL, allowPrivate
 		}
 		return "", "", false, nil
 	}
-	// At the read ceiling we cannot prove that we received the entire document.
-	// Do not turn a cut-off feed into apparently complete research material.
-	if atReadLimit {
+	// The caller reads a probe byte beyond the cap. A complete prefix must not
+	// disguise an oversized response as complete research material.
+	if bodyLimitExceeded {
 		return "", "", false, errInvalidWebFeed
 	}
 	base = feed.elementBase(root, base)
