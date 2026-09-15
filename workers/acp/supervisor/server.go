@@ -271,8 +271,11 @@ type promptState struct {
 	finalAnswerSeen         bool
 	finalAnswerOverflow     bool
 	openCodeAssistantResult assistantMessageResult
-	settlement              *harnessv2.PromptSettlement
-	settlementDigest        string
+	// Mapping/protocol failures are authoritative even when the native turn
+	// already completed. Transport write failures do not set this flag.
+	eventValidationFailed bool
+	settlement            *harnessv2.PromptSettlement
+	settlementDigest      string
 	// Closed when the prompt owner publishes its validated terminal settlement,
 	// or active-work cancellation publishes a non-successful settlement.
 	terminalValidationDone chan struct{}

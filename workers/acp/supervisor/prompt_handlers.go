@@ -229,6 +229,14 @@ func (s *Server) handleStartPrompt(w http.ResponseWriter, r *http.Request) {
 	flusher, _ := w.(http.Flusher)
 	streamBroken := false
 	markStreamBroken := func(stage, eventType, updateKind string, sequence int64, err error) {
+		if stage == "event-map" || stage == "first-event" ||
+			(stage == "event-encode" && harnessv2.IsPoisoningStreamError(err)) {
+			// Keep validation failure even if transport failed earlier. A native
+			// Completed tombstone is not proof of a valid harness event stream.
+			s.mu.Lock()
+			prompt.eventValidationFailed = true
+			s.mu.Unlock()
+		}
 		if streamBroken {
 			return
 		}
@@ -2248,11 +2256,15 @@ func (s *Server) terminalEvent(
 		}
 		return event, effective, nil
 	}
-	if effective.Outcome == acp.PromptOutcomeCompleted && prompt.openCodeAssistantResult.failure != nil {
+	validationFailure := prompt.openCodeAssistantResult.failure
+	if validationFailure == nil && prompt.eventValidationFailed {
+		validationFailure = errors.New("ACP prompt event validation failed")
+	}
+	if effective.Outcome == acp.PromptOutcomeCompleted && validationFailure != nil {
 		effective.Outcome = acp.PromptOutcomeFailed
 		effective.StopReason = acp.StopReasonRefusal
 		effective.Accepted = true
-		effective.Err = prompt.openCodeAssistantResult.failure
+		effective.Err = validationFailure
 	}
 	event = s.buildTerminalEventLocked(state, prompt, effective, now)
 	limit := s.cfg.Capabilities.Limits.MaxTerminalResultBytes

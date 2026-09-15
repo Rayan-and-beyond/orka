@@ -25,6 +25,7 @@ import (
 // no test-only production hooks or synthetic native cancellation results are used.
 type settlementValidationWriteGate struct {
 	eventType harnessv2.EventType
+	writeErr  error
 	entered   chan struct{}
 	release   chan struct{}
 	once      sync.Once
@@ -45,6 +46,9 @@ func (w *settlementValidationWriter) Write(data []byte) (int, error) {
 			close(w.gate.entered)
 			<-w.gate.release
 		})
+		if w.gate.writeErr != nil {
+			return 0, w.gate.writeErr
+		}
 	}
 	return w.ResponseWriter.Write(data)
 }
@@ -226,6 +230,8 @@ func TestSupervisorPromptSettlementValidationNativeCompletionRaceHTTP(t *testing
 		outcome harnessv2.EventType
 	}{
 		{"identity_lost", assistantResultTestChunk{Text: "unidentified"}, harnessv2.EventFailed},
+		{"invalid_tool_id", assistantResultTestChunk{RawUpdate: []byte(`{"sessionUpdate":"tool_call","toolCallId":"","title":"bad","status":"pending"}`)}, harnessv2.EventFailed},
+		{"invalid_tool_status", assistantResultTestChunk{RawUpdate: []byte(`{"sessionUpdate":"tool_call","toolCallId":"tool-bad","title":"bad","status":"not-a-status"}`)}, harnessv2.EventFailed},
 		{"identity_too_long", assistantResultTestChunk{MessageID: strings.Repeat("i", 513), Text: "invalid identity"}, harnessv2.EventFailed},
 		{"text_overflow", assistantResultTestChunk{MessageID: "answer", Text: strings.Repeat("x", assistantResultTestLimit+1)}, harnessv2.EventFailed},
 		{"serialized_overflow", assistantResultTestChunk{MessageID: "answer", Text: strings.Repeat("\"", assistantResultTestLimit/2+1)}, harnessv2.EventFailed},
@@ -483,5 +489,24 @@ func TestSupervisorPromptSettlementValidationNativeBufferFailureHTTP(t *testing.
 				t.Fatal("stream terminal did not preserve the native event-loss failure")
 			}
 		})
+	}
+}
+
+func TestSupervisorPromptSettlementValidationTransportFailureKeepsValidatedSuccessHTTP(t *testing.T) {
+	f, supervisor, gate := newPromptSettlementValidationHTTPFixture(t, harnessv2.EventUpdate, 100*time.Millisecond)
+	gate.writeErr = io.ErrClosedPipe
+	prompt, stream := startBlockedSettlementValidationPrompt(t, f, supervisor, gate, []assistantResultTestChunk{
+		{MessageID: "note", Text: "Execution note."}, {MessageID: "answer", Text: "Valid final answer."},
+	})
+	gate.unblock()
+	_ = awaitSettlementValidationHTTP(t, stream)
+	cancel := settlementValidationCancelRequest(t, prompt, "cancel-after-transport-error", time.Now().UTC().Add(3*time.Second))
+	raw := f.mutate(t, "/v2/runtime-sessions/session-1/prompts/prompt-1/cancel", cancel, http.StatusOK)
+	var response harnessv2.CancelPromptResponse
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Settlement.TerminalEvent != harnessv2.EventCompleted || response.Settlement.Outcome != harnessv2.PromptOutcomeSucceeded {
+		t.Fatal("a transport write failure must not replace a valid execution outcome")
 	}
 }

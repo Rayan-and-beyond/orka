@@ -139,3 +139,11 @@ func TestWebFetchFeedCanonicalizesPublicIDNLinksAndBases(t *testing.T) {
 		})
 	}
 }
+
+func TestWebFetchAtomXHTMLPreservesEscapedText(t *testing.T) {
+	body := `<feed xmlns="http://www.w3.org/2005/Atom"><title type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><span>1 &lt; 2 &gt; 0</span></div></title><entry><title type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><span>Literal &lt;b&gt;tag&lt;/b&gt; &amp;lt;word&amp;gt;</span></div></title><summary type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p><![CDATA[1 < 2 > 0]]></p><p>Literal &lt;script&gt;text()&lt;/script&gt;</p><script>hiddenExecutable()</script><style>hiddenStyle{}</style></div></summary></entry></feed>`
+	tool, base := serveWebFeed(t, body, "application/atom+xml")
+	result, _ := executeWebFeed(t, tool, WebFetchArgs{URL: base})
+	assertWebFeedContains(t, result.Content, "Atom feed: 1 &lt; 2 &gt; 0", "Literal &lt;b&gt;tag&lt;/b&gt; &amp;lt;word&amp;gt;", "Feed summary: 1 &lt; 2 &gt; 0 Literal &lt;script&gt;text\\(\\)&lt;/script&gt;")
+	assertWebFeedExcludes(t, result.Content, "hiddenExecutable", "hiddenStyle", "<div", "<script>", "<![CDATA[")
+}

@@ -31,6 +31,7 @@ type assistantResultTestChunk struct {
 	// Byte encoding preserves malformed Unicode until the helper emits the raw
 	// JSON identity on its ACP stream; the enclosing test prompt stays valid.
 	RawMessageID []byte `json:"rawMessageId,omitempty"`
+	RawUpdate    []byte `json:"rawUpdate,omitempty"`
 	MessageID    string `json:"messageId,omitempty"`
 	Text         string `json:"text"`
 	Thought      bool   `json:"thought,omitempty"`
@@ -728,6 +729,10 @@ func TestSupervisorAssistantResultACPHelper(t *testing.T) {
 				os.Exit(2)
 			}
 			for _, chunk := range chunks {
+				if chunk.RawUpdate != nil {
+					writeHelperMessage(writer, map[string]any{testJSONRPCKey: testJSONRPCVersion, "method": acp.MethodSessionUpdate, "params": map[string]any{"sessionId": prompt.SessionID, "update": json.RawMessage(chunk.RawUpdate)}})
+					continue
+				}
 				kind := "agent_message_chunk"
 				if chunk.Thought {
 					kind = "agent_thought_chunk"

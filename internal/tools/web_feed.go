@@ -310,8 +310,12 @@ func (feed *webFeed) readTextField(decoder *xml.Decoder, child xml.StartElement,
 		case "html":
 			markup = true
 		case "xhtml":
-			markup = true
-			text.Value = text.Inner
+			value, err := webFeedXHTMLText(text.Inner)
+			if err != nil {
+				return err
+			}
+			*target = value
+			return nil
 		}
 	}
 	if markup {
@@ -415,6 +419,45 @@ func webFeedText(value string) string {
 	// the existing script/style/tag stripping so encoded markup stays inert.
 	text := extractText([]byte(html.UnescapeString(value)))
 	return webFeedLiteralText(text)
+}
+
+// Read XHTML nodes before decoding/escaping their character data. An escaped
+// angle bracket or CDATA payload is text, never markup to strip a second time.
+func webFeedXHTMLText(value string) (string, error) {
+	decoder := xml.NewDecoder(strings.NewReader(value))
+	var text strings.Builder
+	ignoredDepth := 0
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			return webFeedLiteralText(text.String()), nil
+		}
+		if err != nil {
+			return "", errInvalidWebFeed
+		}
+		switch part := token.(type) {
+		case xml.StartElement:
+			if ignoredDepth > 0 {
+				ignoredDepth++
+			} else if name := strings.ToLower(part.Name.Local); name == "script" || name == "style" {
+				ignoredDepth = 1
+			} else {
+				text.WriteByte(' ')
+			}
+		case xml.EndElement:
+			if ignoredDepth > 0 {
+				ignoredDepth--
+			} else {
+				text.WriteByte(' ')
+			}
+		case xml.CharData:
+			if ignoredDepth == 0 {
+				text.Write(part)
+			}
+		case xml.Directive:
+			return "", errInvalidWebFeed
+		}
+	}
 }
 
 func webFeedLiteralText(value string) string {
