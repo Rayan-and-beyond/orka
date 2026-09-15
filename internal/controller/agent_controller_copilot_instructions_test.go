@@ -36,7 +36,7 @@ func copilotSoulInstructionsAgent(name string) *corev1alpha1.Agent {
 	return agent
 }
 
-func assertCopilotInstructionsReady(t *testing.T, r *AgentReconciler, agent *corev1alpha1.Agent, want bool, message string) {
+func assertAgentInstructionsReady(t *testing.T, r *AgentReconciler, agent *corev1alpha1.Agent, want bool, message string) {
 	t.Helper()
 	stored := &corev1alpha1.Agent{}
 	require.NoError(t, r.Get(context.Background(), client.ObjectKeyFromObject(agent), stored))
@@ -66,6 +66,10 @@ func TestAgentCopilotSoulReadinessMatchesPlanning(t *testing.T) {
 	}{
 		{name: "inline instructions", role: copilotInstructionsRoleText, soul: agentSoulWatchText, wantReady: true},
 		{name: "no role", soul: agentSoulWatchText, wantReady: true},
+		{name: "role only", role: copilotInstructionsRoleText, wantReady: true},
+		{name: "role only ConfigMap", role: copilotInstructionsRoleText, roleConfigMap: true, wantReady: true},
+		{name: "role only import", role: "Role: consult @role-notes.md"},
+		{name: "role only ConfigMap import", role: "Role: consult @role-notes.md", roleConfigMap: true},
 		{name: "inline soul import", role: copilotInstructionsRoleText, soul: "Persona: consult @soul-notes.md"},
 		{name: "inline role import", role: "Role: consult @role-notes.md", soul: agentSoulWatchText},
 		{name: "ConfigMap soul import", role: copilotInstructionsRoleText, soul: "Persona: consult @soul-notes.md", soulConfigMap: true},
@@ -76,7 +80,13 @@ func TestAgentCopilotSoulReadinessMatchesPlanning(t *testing.T) {
 			ctx := context.Background()
 			agent := copilotSoulInstructionsAgent("copilot-readiness")
 			agent.Spec.SystemPrompt.Inline = test.role
-			agent.Spec.Soul.Inline = test.soul
+			var expectedSoul *agentcontext.ResolvedSoul
+			if test.soul == "" {
+				agent.Spec.Soul = nil
+			} else {
+				agent.Spec.Soul.Inline = test.soul
+				expectedSoul = &agentcontext.ResolvedSoul{Text: test.soul}
+			}
 			objects := []client.Object{agent}
 			if test.roleConfigMap {
 				roleMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: copilotInstructionsRoleMapName, Namespace: agent.Namespace}, Data: map[string]string{copilotInstructionsRoleMapKey: test.role}}
@@ -92,7 +102,7 @@ func TestAgentCopilotSoulReadinessMatchesPlanning(t *testing.T) {
 			task := &corev1alpha1.Task{Spec: corev1alpha1.TaskSpec{Type: corev1alpha1.TaskTypeAgent}}
 			configuration, err := resolveACPAgentSessionConfiguration(ctx, r.Client, task, agent)
 			require.NoError(t, err) // Generic soul resolution permits @; Copilot planning does not.
-			require.Equal(t, agentcontext.Compose(test.role, &agentcontext.ResolvedSoul{Text: test.soul}), configuration.SystemPrompt)
+			require.Equal(t, agentcontext.Compose(test.role, expectedSoul), configuration.SystemPrompt)
 			_, planErr := PlanACPRuntimeWithConfiguration(task, agent, ACPRuntimeImages{Copilot: "docker.io/example/copilot@sha256:" + strings.Repeat("c", 64)}, configuration)
 			if test.wantReady {
 				require.NoError(t, planErr)
@@ -101,7 +111,7 @@ func TestAgentCopilotSoulReadinessMatchesPlanning(t *testing.T) {
 			}
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(agent)})
 			require.NoError(t, err)
-			assertCopilotInstructionsReady(t, r, agent, test.wantReady, "must not contain @")
+			assertAgentInstructionsReady(t, r, agent, test.wantReady, "must not contain @")
 		})
 	}
 }
@@ -111,7 +121,10 @@ func TestAgentCopilotSoulReadinessPreservesOtherPaths(t *testing.T) {
 		name   string
 		mutate func(*corev1alpha1.Agent)
 	}{
-		{name: "Copilot without soul", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Soul = nil }},
+		{name: "unclassified Copilot without soul", mutate: func(agent *corev1alpha1.Agent) {
+			agent.Spec.Soul = nil
+			agent.Spec.Runtime.ContractVersion = nil
+		}},
 		{name: "legacy Copilot without soul", mutate: func(agent *corev1alpha1.Agent) {
 			agent.Spec.Soul = nil
 			agent.Spec.Runtime.ContractVersion = new(corev1alpha1.AgentRuntimeContractHarnessV1)
@@ -134,56 +147,67 @@ func TestAgentCopilotSoulReadinessPreservesOtherPaths(t *testing.T) {
 			r := newAgentSoulWatchReconciler(t, agent)
 			_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(agent)})
 			require.NoError(t, err)
-			assertCopilotInstructionsReady(t, r, agent, true, "")
+			assertAgentInstructionsReady(t, r, agent, true, "")
 		})
 	}
 }
 
 func TestAgentCopilotSoulRoleConfigMapReadinessTransitions(t *testing.T) {
-	ctx := context.Background()
-	agent := copilotSoulInstructionsAgent("role-readiness")
-	agent.Spec.SystemPrompt = &corev1alpha1.PromptSource{ConfigMapRef: &corev1alpha1.ConfigMapKeySelector{Name: copilotInstructionsRoleMapName, Key: copilotInstructionsRoleMapKey}}
-	otherNamespace := agent.DeepCopy()
-	otherNamespace.Namespace = "another-namespace"
-	r := newAgentSoulWatchReconciler(t, agent, otherNamespace)
-	request := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(agent)}
-	roleMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: copilotInstructionsRoleMapName, Namespace: agent.Namespace}, Data: map[string]string{copilotInstructionsRoleMapKey: copilotInstructionsRoleText}}
-	reconcileMap := func(wantReady bool, message string) {
-		t.Helper()
-		requests := r.agentsForSoulConfigMap(ctx, roleMap)
-		require.Equal(t, []reconcile.Request{request}, requests)
-		_, err := r.Reconcile(ctx, requests[0])
-		require.NoError(t, err)
-		assertCopilotInstructionsReady(t, r, agent, wantReady, message)
+	for _, withSoul := range []bool{true, false} {
+		name := "role only"
+		if withSoul {
+			name = "role and soul"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			agent := copilotSoulInstructionsAgent("role-readiness")
+			if !withSoul {
+				agent.Spec.Soul = nil
+			}
+			agent.Spec.SystemPrompt = &corev1alpha1.PromptSource{ConfigMapRef: &corev1alpha1.ConfigMapKeySelector{Name: copilotInstructionsRoleMapName, Key: copilotInstructionsRoleMapKey}}
+			otherNamespace := agent.DeepCopy()
+			otherNamespace.Namespace = "another-namespace"
+			r := newAgentSoulWatchReconciler(t, agent, otherNamespace)
+			request := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(agent)}
+			roleMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: copilotInstructionsRoleMapName, Namespace: agent.Namespace}, Data: map[string]string{copilotInstructionsRoleMapKey: copilotInstructionsRoleText}}
+			reconcileMap := func(wantReady bool, message string) {
+				t.Helper()
+				requests := r.agentsForSoulConfigMap(ctx, roleMap)
+				require.Equal(t, []reconcile.Request{request}, requests)
+				_, err := r.Reconcile(ctx, requests[0])
+				require.NoError(t, err)
+				assertAgentInstructionsReady(t, r, agent, wantReady, message)
+			}
+
+			_, err := r.Reconcile(ctx, request)
+			require.NoError(t, err)
+			assertAgentInstructionsReady(t, r, agent, false, "not found")
+
+			require.NoError(t, r.Create(ctx, roleMap))
+			reconcileMap(true, "")
+			roleMap.Data[copilotInstructionsRoleMapKey] = "Role: consult @role-notes.md"
+			require.NoError(t, r.Update(ctx, roleMap))
+			reconcileMap(false, "must not contain @")
+			roleMap.Data[copilotInstructionsRoleMapKey] = copilotInstructionsRoleText
+			require.NoError(t, r.Update(ctx, roleMap))
+			reconcileMap(true, "")
+
+			delete(roleMap.Data, copilotInstructionsRoleMapKey)
+			require.NoError(t, r.Update(ctx, roleMap))
+			reconcileMap(false, "not found")
+			roleMap.Data[copilotInstructionsRoleMapKey] = copilotInstructionsRoleText
+			require.NoError(t, r.Update(ctx, roleMap))
+			reconcileMap(true, "")
+			require.NoError(t, r.Delete(ctx, roleMap))
+			reconcileMap(false, "not found")
+			roleMap.ResourceVersion = ""
+			roleMap.UID = ""
+			require.NoError(t, r.Create(ctx, roleMap))
+			reconcileMap(true, "")
+
+			foreign := &corev1alpha1.Agent{}
+			require.NoError(t, r.Get(ctx, client.ObjectKeyFromObject(otherNamespace), foreign))
+			require.Empty(t, foreign.Status.Conditions, "same-name ConfigMap in another namespace must not reconcile this Agent")
+		})
 	}
-
-	_, err := r.Reconcile(ctx, request)
-	require.NoError(t, err)
-	assertCopilotInstructionsReady(t, r, agent, false, "not found")
-
-	require.NoError(t, r.Create(ctx, roleMap))
-	reconcileMap(true, "")
-	roleMap.Data[copilotInstructionsRoleMapKey] = "Role: consult @role-notes.md"
-	require.NoError(t, r.Update(ctx, roleMap))
-	reconcileMap(false, "must not contain @")
-	roleMap.Data[copilotInstructionsRoleMapKey] = copilotInstructionsRoleText
-	require.NoError(t, r.Update(ctx, roleMap))
-	reconcileMap(true, "")
-
-	delete(roleMap.Data, copilotInstructionsRoleMapKey)
-	require.NoError(t, r.Update(ctx, roleMap))
-	reconcileMap(false, "not found")
-	roleMap.Data[copilotInstructionsRoleMapKey] = copilotInstructionsRoleText
-	require.NoError(t, r.Update(ctx, roleMap))
-	reconcileMap(true, "")
-	require.NoError(t, r.Delete(ctx, roleMap))
-	reconcileMap(false, "not found")
-	roleMap.ResourceVersion = ""
-	roleMap.UID = ""
-	require.NoError(t, r.Create(ctx, roleMap))
-	reconcileMap(true, "")
-
-	foreign := &corev1alpha1.Agent{}
-	require.NoError(t, r.Get(ctx, client.ObjectKeyFromObject(otherNamespace), foreign))
-	require.Empty(t, foreign.Status.Conditions, "same-name ConfigMap in another namespace must not reconcile this Agent")
 }

@@ -69,6 +69,7 @@ func TestAgentSoulConfigMapWatchMapping(t *testing.T) {
 	want := []reconcile.Request{
 		{NamespacedName: client.ObjectKeyFromObject(matching)},
 		{NamespacedName: client.ObjectKeyFromObject(otherKey)},
+		{NamespacedName: client.ObjectKeyFromObject(roleOnly)},
 	}
 	ctx := context.Background()
 	h := handler.EnqueueRequestsFromMapFunc(r.agentsForSoulConfigMap)
@@ -222,9 +223,11 @@ func TestAgentSoulConfigMapWatchCopilotRoleDependencies(t *testing.T) {
 			agent.Spec.Soul.ConfigMapRef.Name = copilotInstructionsRoleMapName
 		}, want: true},
 		{name: "another namespace", mutate: func(agent *corev1alpha1.Agent) { agent.Namespace = "another-namespace" }},
-		{name: "no soul", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Soul = nil }},
-		{name: "AI", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Runtime = nil }},
-		{name: "Claude", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Runtime.Type = corev1alpha1.AgentRuntimeClaude }},
+		{name: "no soul", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Soul = nil }, want: true},
+		{name: "AI", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Runtime = nil }, want: true},
+		{name: "Claude", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Runtime.Type = corev1alpha1.AgentRuntimeClaude }, want: true},
+		{name: "Codex", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Runtime.Type = corev1alpha1.AgentRuntimeCodex }, want: true},
+		{name: "OpenCode", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Runtime.Type = corev1alpha1.AgentRuntimeOpencode }, want: true},
 		{name: "legacy Copilot", mutate: func(agent *corev1alpha1.Agent) {
 			agent.Spec.Runtime.ContractVersion = new(corev1alpha1.AgentRuntimeContractHarnessV1)
 		}},
@@ -248,7 +251,8 @@ func TestAgentSoulConfigMapWatchCopilotRoleDependencies(t *testing.T) {
 				want := []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(agent)}}
 				require.Equal(t, want, requests)
 				dependencies := []string{roleMap.Name}
-				if ref := agent.Spec.Soul.ConfigMapRef; ref != nil {
+				if agent.Spec.Soul != nil && agent.Spec.Soul.ConfigMapRef != nil {
+					ref := agent.Spec.Soul.ConfigMapRef
 					soulMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: agent.Namespace}}
 					require.Equal(t, want, r.agentsForSoulConfigMap(context.Background(), soulMap))
 					if ref.Name != roleMap.Name {
@@ -281,6 +285,9 @@ func TestAgentSoulConfigMapWatchCopilotRoleReferenceChanges(t *testing.T) {
 	require.Equal(t, want, r.agentsForSoulConfigMap(ctx, replacement))
 
 	agent.Spec.Soul = nil
+	require.NoError(t, r.Update(ctx, agent))
+	require.Equal(t, want, r.agentsForSoulConfigMap(ctx, replacement), "role-only Copilot still depends on its role source")
+	agent.Spec.SystemPrompt = nil
 	require.NoError(t, r.Update(ctx, agent))
 	require.Empty(t, r.agentsForSoulConfigMap(ctx, replacement))
 }

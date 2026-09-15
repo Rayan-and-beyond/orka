@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orka-agents/orka/internal/acp"
 	"github.com/orka-agents/orka/internal/agentcontext"
 
 	corev1 "k8s.io/api/core/v1"
@@ -142,23 +141,8 @@ func (r *AgentReconciler) validateAgent(ctx context.Context, agent *corev1alpha1
 	if err := r.validateSystemPromptConfigMap(ctx, agent); err != nil {
 		return err
 	}
-	if agent.Spec.Soul != nil {
-		if err := validateSoulRuntime(agent); err != nil {
-			return err
-		}
-		soul, err := agentcontext.ResolveSoul(ctx, r.Client, agent)
-		if err != nil {
-			return err
-		}
-		if agentUsesCopilotSoulInstructions(agent) {
-			role, err := resolveACPSystemPrompt(ctx, r.Client, agent)
-			if err != nil {
-				return err
-			}
-			if err := acp.ValidateCopilotInstructions(agentcontext.Compose(role, soul)); err != nil {
-				return err
-			}
-		}
+	if err := r.validateDefaultInstructions(ctx, agent); err != nil {
+		return err
 	}
 	return r.validateCoordination(ctx, agent)
 }
@@ -458,26 +442,82 @@ func (r *AgentReconciler) checkTTLExpiry(ctx context.Context, agent *corev1alpha
 	return ctrl.Result{}, true
 }
 
-// agentUsesCopilotSoulInstructions scopes native prompt readiness validation and
-// its role-source dependencies without changing no-soul or other-runtime behavior.
-func agentUsesCopilotSoulInstructions(agent *corev1alpha1.Agent) bool {
-	return agent != nil && agent.Spec.Soul != nil && agent.Spec.Runtime != nil &&
-		agent.Spec.Runtime.Type == corev1alpha1.AgentRuntimeCopilot && agent.Spec.Runtime.RuntimeRef == nil &&
-		agent.BuiltInContractVersion() == corev1alpha1.AgentRuntimeContractHarnessV2
+// agentValidatesDefaultInstructions excludes external and legacy runtimes, whose
+// prompt delivery is not described by the built-in v2 configuration validators.
+func agentValidatesDefaultInstructions(agent *corev1alpha1.Agent) bool {
+	if agent == nil {
+		return false
+	}
+	if agent.Spec.Runtime == nil {
+		return true
+	}
+	if agent.Spec.Runtime.RuntimeRef != nil || agent.BuiltInContractVersion() != corev1alpha1.AgentRuntimeContractHarnessV2 {
+		return false
+	}
+	switch agent.Spec.Runtime.Type {
+	case corev1alpha1.AgentRuntimeCodex, corev1alpha1.AgentRuntimeClaude,
+		corev1alpha1.AgentRuntimeCopilot, corev1alpha1.AgentRuntimeOpencode:
+		return true
+	default:
+		return false
+	}
 }
 
-// agentSoulConfigMapDependencyIndex is a cache-only dependency index. In addition
-// to soul sources, v2 Copilot Agents with a soul depend on their composed role.
+// validateDefaultInstructions checks the Agent's default role and soul against
+// the same delivery guards as execution. A Task can override the role or other
+// controls; readiness does not describe those Task-specific configurations.
+func (r *AgentReconciler) validateDefaultInstructions(ctx context.Context, agent *corev1alpha1.Agent) error {
+	if err := validateSoulRuntime(agent); err != nil {
+		return err
+	}
+	soul, err := agentcontext.ResolveSoul(ctx, r.Client, agent)
+	if err != nil {
+		return err
+	}
+	if !agentValidatesDefaultInstructions(agent) || (soul == nil && agent.Spec.SystemPrompt == nil) {
+		return nil
+	}
+	if agent.Spec.Runtime == nil && soul == nil {
+		// No-soul AI keeps the legacy role-source precedence and raw environment
+		// delivery; literal dollar escaping is only used with a soul.
+		builder := &JobBuilder{Client: r.Client}
+		task := &corev1alpha1.Task{Spec: corev1alpha1.TaskSpec{Type: corev1alpha1.TaskTypeAI}}
+		return builder.validateContainerDeliveredPromptSize(ctx, task, agent)
+	}
+	role, err := resolveACPSystemPrompt(ctx, r.Client, agent)
+	if err != nil {
+		return err
+	}
+	prompt := agentcontext.Compose(role, soul)
+	if agent.Spec.Runtime == nil {
+		builder := &JobBuilder{Client: r.Client}
+		task := &corev1alpha1.Task{Spec: corev1alpha1.TaskSpec{Type: corev1alpha1.TaskTypeAI}}
+		return builder.validateContainerDeliveredPromptSize(ctx, task, nil, literalKubernetesPrompt(prompt))
+	}
+	task := &corev1alpha1.Task{Spec: corev1alpha1.TaskSpec{Type: corev1alpha1.TaskTypeAgent}}
+	configuration, err := buildACPAgentSessionConfiguration(task, agent, prompt)
+	if err != nil {
+		return err
+	}
+	// This includes Codex's JSON-escaped native environment envelope, not just
+	// the raw ACP configuration bound, and Copilot's literal-instruction policy.
+	return validateACPProviderSystemPrompt(string(agent.Spec.Runtime.Type), configuration)
+}
+
+// agentSoulConfigMapDependencyIndex is a cache-only dependency index. Besides
+// soul sources, index every role source read by default-instruction validation.
 func agentSoulConfigMapDependencyIndex(object client.Object) []string {
 	agent, ok := object.(*corev1alpha1.Agent)
-	if !ok || agent == nil || agent.Spec.Soul == nil {
+	if !ok || agent == nil {
 		return nil
 	}
 	names := make([]string, 0, 2)
-	if ref := agent.Spec.Soul.ConfigMapRef; ref != nil && ref.Name != "" {
-		names = append(names, ref.Name)
+	if agent.Spec.Soul != nil {
+		if ref := agent.Spec.Soul.ConfigMapRef; ref != nil && ref.Name != "" {
+			names = append(names, ref.Name)
+		}
 	}
-	if agentUsesCopilotSoulInstructions(agent) && agent.Spec.SystemPrompt != nil {
+	if agentValidatesDefaultInstructions(agent) && agent.Spec.SystemPrompt != nil {
 		if ref := agent.Spec.SystemPrompt.ConfigMapRef; ref != nil && ref.Name != "" && !slices.Contains(names, ref.Name) {
 			names = append(names, ref.Name)
 		}

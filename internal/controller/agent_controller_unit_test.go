@@ -126,6 +126,8 @@ func TestValidateAgent_OpenCodeRequirements(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			agent := baseAgent("opencode")
+			agent.UID = "opencode-agent-uid"
+			agent.Generation = 1
 			agent.Spec.ProviderRef = nil
 			agent.Spec.Runtime = &corev1alpha1.AgentCLIRuntime{
 				Type:            corev1alpha1.AgentRuntimeOpencode,
