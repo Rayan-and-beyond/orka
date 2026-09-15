@@ -28,6 +28,9 @@ func resolveAISoul(ctx context.Context, reader client.Reader, task *corev1alpha1
 		}
 		return nil, nil
 	}
+	if err := validateAISoulIntroduction(task); err != nil {
+		return nil, err
+	}
 	if err := validateSoulRuntime(agent); err != nil {
 		return nil, err
 	}
@@ -69,6 +72,16 @@ func resolveAISoul(ctx context.Context, reader client.Reader, task *corev1alpha1
 	return &resolvedAISoul{Prompt: prompt, UserPrompt: userPrompt, Binding: binding}, nil
 }
 
+// validateAISoulIntroduction preserves legacy no-soul execution while preventing
+// an already-started Task from acquiring its first persona on retry or iteration.
+func validateAISoulIntroduction(task *corev1alpha1.Task) error {
+	if task.Status.SoulBinding == nil && (task.Status.Attempts > 0 || task.Status.StartTime != nil ||
+		task.Status.JobName != "" || task.Status.JobUID != "" || task.Status.Iteration > 0) {
+		return fmt.Errorf("AI Task cannot acquire a soul after execution has started; create a new Task")
+	}
+	return nil
+}
+
 func literalKubernetesPrompt(value string) string {
 	return strings.ReplaceAll(value, "$", "$$")
 }
@@ -108,6 +121,9 @@ func (r *TaskReconciler) prepareAISoul(ctx context.Context, task *corev1alpha1.T
 		}
 		if current.UID != task.UID || current.Generation != task.Generation || !current.DeletionTimestamp.IsZero() {
 			return fmt.Errorf("task identity changed before AI soul binding")
+		}
+		if err := validateAISoulIntroduction(current); err != nil {
+			return err
 		}
 		if current.Status.SoulBinding != nil {
 			if *current.Status.SoulBinding != *binding {
@@ -179,14 +195,7 @@ func validatePreparedAISoul(task *corev1alpha1.Task, agent *corev1alpha1.Agent, 
 }
 
 func validateSoulRuntime(agent *corev1alpha1.Agent) error {
-	if agent == nil || agent.Spec.Soul == nil || agent.Spec.Runtime == nil {
-		return nil
-	}
-	runtime := agent.Spec.Runtime
-	if runtime.RuntimeRef != nil || !isBuiltInACPProviderRuntime(runtime.Type) || runtime.ContractVersion == nil || *runtime.ContractVersion != corev1alpha1.AgentRuntimeContractHarnessV2 {
-		return fmt.Errorf("agent.spec.soul requires an AI worker or a built-in harness v2 runtime")
-	}
-	return nil
+	return agentcontext.ValidateSoulRuntime(agent)
 }
 
 func effectiveAISoulTaskPrompt(task *corev1alpha1.Task) string {

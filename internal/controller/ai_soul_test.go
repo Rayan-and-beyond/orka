@@ -8,6 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	corev1alpha1 "github.com/orka-agents/orka/api/v1alpha1"
@@ -50,6 +51,12 @@ func TestAISoulBindingAndLiteralDelivery(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("missing prompt environment")
+	}
+	task.Status.Attempts = 1
+	now := metav1.Now()
+	task.Status.StartTime = &now
+	if _, err := r.prepareAISoul(context.Background(), task, agent); err != nil {
+		t.Fatalf("retry with an existing soul binding was rejected: %v", err)
 	}
 	agent.Spec.Soul.Inline = "replacement"
 	if _, err := r.prepareAISoul(context.Background(), task, agent); err == nil {
@@ -99,5 +106,65 @@ func TestAISoulSessionRevisionContract(t *testing.T) {
 				t.Fatalf("want error=%v, got %v", test.wantError, err)
 			}
 		})
+	}
+}
+
+func TestAISoulIntroductionAfterExecutionIsRejected(t *testing.T) {
+	now := metav1.Now()
+	for _, test := range []struct {
+		name   string
+		status corev1alpha1.TaskStatus
+	}{
+		{name: "retry after the old Job was cleared", status: corev1alpha1.TaskStatus{Phase: corev1alpha1.TaskPhasePending, Attempts: 1}},
+		{name: "start time without attempt count", status: corev1alpha1.TaskStatus{StartTime: &now}},
+		{name: "existing Job name", status: corev1alpha1.TaskStatus{JobName: "previous-job"}},
+		{name: "existing Job identity", status: corev1alpha1.TaskStatus{JobUID: "previous-job-uid"}},
+		{name: "autonomous iteration", status: corev1alpha1.TaskStatus{Iteration: 1}},
+	} {
+		for _, stale := range []bool{false, true} {
+			name := test.name
+			if stale {
+				name += "/stale-reconcile-read"
+			}
+			t.Run(name, func(t *testing.T) {
+				ctx := context.Background()
+				scheme := runtime.NewScheme()
+				if err := corev1alpha1.AddToScheme(scheme); err != nil {
+					t.Fatal(err)
+				}
+				agent := &corev1alpha1.Agent{
+					ObjectMeta: metav1.ObjectMeta{Namespace: "team", Name: "a", UID: "agent-uid", Generation: 2},
+					Spec:       corev1alpha1.AgentSpec{Soul: &corev1alpha1.SoulSource{Inline: "new persona"}},
+				}
+				task := &corev1alpha1.Task{
+					ObjectMeta: metav1.ObjectMeta{Namespace: "team", Name: "t", UID: "task-uid", Generation: 1},
+					Spec:       corev1alpha1.TaskSpec{Type: corev1alpha1.TaskTypeAI},
+					Status:     test.status,
+				}
+				c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&corev1alpha1.Task{}).WithObjects(task, agent).Build()
+				r := &TaskReconciler{Client: c, APIReader: c}
+				input := task.DeepCopy()
+				if stale {
+					input.Status = corev1alpha1.TaskStatus{}
+				}
+				if _, err := r.prepareAISoul(ctx, input, agent); err == nil || !strings.Contains(err.Error(), "cannot acquire a soul") {
+					t.Fatalf("started Task acquired its first soul: %v", err)
+				}
+				stored := &corev1alpha1.Task{}
+				if err := c.Get(ctx, client.ObjectKeyFromObject(task), stored); err != nil {
+					t.Fatal(err)
+				}
+				if stored.Status.SoulBinding != nil || input.Status.SoulBinding != nil {
+					t.Fatal("rejected introduction persisted a soul binding")
+				}
+
+				// Unconfigured legacy retries keep their original behavior.
+				agent.Spec.Soul = nil
+				prepared, err := r.prepareAISoul(ctx, stored, agent)
+				if err != nil || prepared != nil || stored.Status.SoulBinding != nil {
+					t.Fatalf("legacy no-soul retry changed: prepared=%v, error=%v", prepared != nil, err)
+				}
+			})
+		}
 	}
 }

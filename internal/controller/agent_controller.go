@@ -37,6 +37,8 @@ type AgentReconciler struct {
 }
 
 const (
+	agentSoulConfigMapNameField = "spec.soul.configMapRef.name"
+
 	agentReasoningEffortLow    = "low"
 	agentReasoningEffortMedium = "medium"
 	agentReasoningEffortHigh   = "high"
@@ -50,7 +52,7 @@ const (
 // +kubebuilder:rbac:groups=core.orka.ai,resources=tasks,verbs=list
 // +kubebuilder:rbac:groups=core.orka.ai,resources=providers,verbs=get
 // +kubebuilder:rbac:groups=core.orka.ai,resources=tools,verbs=get
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 // Reconcile validates the Agent configuration and updates its status.
@@ -444,10 +446,45 @@ func (r *AgentReconciler) checkTTLExpiry(ctx context.Context, agent *corev1alpha
 	return ctrl.Result{}, true
 }
 
+// agentSoulConfigMapNameIndex tracks explicit soul sources, not role prompts or skills.
+func agentSoulConfigMapNameIndex(object client.Object) []string {
+	agent, ok := object.(*corev1alpha1.Agent)
+	if !ok || agent == nil || agent.Spec.Soul == nil || agent.Spec.Soul.ConfigMapRef == nil || agent.Spec.Soul.ConfigMapRef.Name == "" {
+		return nil
+	}
+	return []string{agent.Spec.Soul.ConfigMapRef.Name}
+}
+
+// agentsForSoulConfigMap works for creation and deletion too: it maps declared
+// references without fetching the ConfigMap or depending on its current contents.
+func (r *AgentReconciler) agentsForSoulConfigMap(ctx context.Context, object client.Object) []reconcile.Request {
+	configMap, ok := object.(*corev1.ConfigMap)
+	if !ok || configMap == nil || configMap.Namespace == "" || configMap.Name == "" {
+		return nil
+	}
+	var agents corev1alpha1.AgentList
+	if err := r.List(ctx, &agents, client.InNamespace(configMap.Namespace), client.MatchingFields{
+		agentSoulConfigMapNameField: configMap.Name,
+	}); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to list Agents referencing soul ConfigMap",
+			"namespace", configMap.Namespace, "configMap", configMap.Name)
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(agents.Items))
+	for i := range agents.Items {
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&agents.Items[i])})
+	}
+	return requests
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1alpha1.Agent{}, agentSoulConfigMapNameField, agentSoulConfigMapNameIndex); err != nil {
+		return fmt.Errorf("index agent soul ConfigMap references: %w", err)
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.Agent{}).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.agentsForSoulConfigMap)).
 		// Watch Tasks so that when a task completes, the referenced agent
 		// gets reconciled for TTL checking.
 		Watches(&corev1alpha1.Task{}, handler.EnqueueRequestsFromMapFunc(

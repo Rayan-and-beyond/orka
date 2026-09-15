@@ -182,16 +182,6 @@ export function AgentCreateForm() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <label htmlFor="agent-system-prompt" className="text-sm font-medium">System Prompt</label>
-                  <textarea
-                    id="agent-system-prompt"
-                    className="flex min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    value={systemPrompt}
-                    onChange={(e) => setSystemPrompt(e.target.value)}
-                    placeholder="Optional system prompt..."
-                  />
-                </div>
-                <div className="space-y-2">
                   <label className="text-sm font-medium">Secret Reference</label>
                   <Select value={secretRef} onValueChange={setSecretRef}>
                     <SelectTrigger><SelectValue placeholder="Select a secret..." /></SelectTrigger>
@@ -301,6 +291,19 @@ export function AgentCreateForm() {
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {(mode === 'ai' || runtimeSource === 'built-in') && (
+              <div className="space-y-2">
+                <label htmlFor="agent-system-prompt" className="text-sm font-medium">System Prompt</label>
+                <textarea
+                  id="agent-system-prompt"
+                  className="flex min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  placeholder="Optional system prompt..."
+                />
               </div>
             )}
 

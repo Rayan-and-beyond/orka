@@ -100,7 +100,9 @@ An incompatible Session configuration is a terminal error, not a capacity retry.
 AI Tasks record only Agent identity and content digests in `status.soulBinding`;
 no persona text enters that status. Each new Job attempt must resolve the same
 Agent revision and composed prompt. Missing or changed inputs reject the retry
-rather than silently switching persona. Dollar syntax in soul-enabled AI Task and
+rather than silently switching persona. An AI Task that started without a soul
+cannot acquire one during a retry or autonomous iteration; create a new Task to
+enable it. Dollar syntax in soul-enabled AI Task and
 system prompts is transported literally, without Kubernetes environment expansion.
 
 AI conversation continuity uses controller-authored revision metadata on the
