@@ -23,7 +23,16 @@ func soulParameterSchema() map[string]any {
 			"configMapRef": map[string]any{jsonSchemaTypeField: jsonSchemaTypeObject, jsonSchemaPropertiesField: map[string]any{"name": map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, soulMinLengthField: 1}, "key": map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, soulMinLengthField: 1}}, jsonSchemaRequiredField: []string{"name", "key"}},
 			"digest":       map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, "pattern": "^sha256:[0-9a-f]{64}$"},
 		},
-		"oneOf": []any{map[string]any{jsonSchemaRequiredField: []string{"inline"}}, map[string]any{jsonSchemaRequiredField: []string{"configMapRef", "digest"}}},
+		"oneOf": []any{
+			map[string]any{
+				jsonSchemaRequiredField: []string{"inline"},
+				"not":                   map[string]any{jsonSchemaRequiredField: []string{"configMapRef"}},
+			},
+			map[string]any{
+				jsonSchemaRequiredField: []string{"configMapRef", "digest"},
+				"not":                   map[string]any{jsonSchemaRequiredField: []string{"inline"}},
+			},
+		},
 	}
 }
 

@@ -1496,7 +1496,10 @@ func (r *TaskReconciler) createTaskJob(ctx context.Context, task *corev1alpha1.T
 
 	aiSoul, err := r.prepareAISoul(ctx, jobTask, agent)
 	if err != nil {
-		return r.failTask(ctx, task, fmt.Sprintf("AI soul configuration: %v", err))
+		if isPermanentAISoulConfigurationError(err) {
+			return r.failTask(ctx, task, fmt.Sprintf("AI soul configuration: %v", err))
+		}
+		return ctrl.Result{}, err
 	}
 
 	// Create the Job

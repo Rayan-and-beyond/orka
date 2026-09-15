@@ -465,6 +465,9 @@ func (t *CreateAgentTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if err := executionmode.DefaultBuiltInAgentContract(agent, t.executionMode); err != nil {
 		return "", err
 	}
+	if err := agentcontext.ValidateSoulRuntime(agent); err != nil {
+		return "", err
+	}
 
 	// Set a non-blocking owner reference for auto-cleanup. Worker RBAC allows
 	// creating child resources but not updating the parent Task's finalizers.

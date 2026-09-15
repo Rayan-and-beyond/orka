@@ -105,12 +105,20 @@ cannot acquire one during a retry or autonomous iteration; create a new Task to
 enable it. Dollar syntax in soul-enabled AI Task and
 system prompts is transported literally, without Kubernetes environment expansion.
 
-AI conversation continuity uses controller-authored revision metadata on the
-first canonical transcript turn. That metadata survives Task cleanup with the
-Session, without a new SQLite schema or a separate persona store. A new AI soul
-Session must append its initial turn; an established Session can subsequently be
-used without appending. Legacy conversations without a soul cannot acquire one
-in-place. Removing or changing a soul/role revision requires a new Session.
+For soul-enabled AI Tasks, conversation continuity pins controller-authored,
+digest-only revision metadata under the exact Task's Session lock **before the
+first Job starts**. The pin uses
+existing Session transcript storage, is hidden from transcript reads and message
+counts, and survives Task cleanup without a new SQLite schema or a separate
+persona store. Canonical turns also carry the same digest. A later transcript or
+result-write failure, or an empty initial turn, cannot erase the Session identity.
+The pin is not rolled back if later Job creation fails or the Task is cancelled.
+Transient API, Session-store, and pin-write failures retry reconciliation without
+consuming an execution attempt; invalid configuration and revision drift still
+fail closed. A new AI soul Session must append its initial turn; an established
+Session can subsequently be used without appending. Legacy conversations without
+a soul cannot acquire one in-place. Removing or changing a soul/role revision
+requires a new Session.
 Gateway-owned conversations retain the same rule through their canonical terminal
 projection, independently of queued future user messages. Event retention preserves
 a digest-only identity anchor while removing expired content; the anchor is hidden

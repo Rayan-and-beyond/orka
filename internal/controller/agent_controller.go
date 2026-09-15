@@ -9,9 +9,11 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/orka-agents/orka/internal/acp"
 	"github.com/orka-agents/orka/internal/agentcontext"
 
 	corev1 "k8s.io/api/core/v1"
@@ -37,7 +39,7 @@ type AgentReconciler struct {
 }
 
 const (
-	agentSoulConfigMapNameField = "spec.soul.configMapRef.name"
+	agentSoulConfigMapDependenciesField = "agent.soulConfigMapDependencies"
 
 	agentReasoningEffortLow    = "low"
 	agentReasoningEffortMedium = "medium"
@@ -144,8 +146,18 @@ func (r *AgentReconciler) validateAgent(ctx context.Context, agent *corev1alpha1
 		if err := validateSoulRuntime(agent); err != nil {
 			return err
 		}
-		if _, err := agentcontext.ResolveSoul(ctx, r.Client, agent); err != nil {
+		soul, err := agentcontext.ResolveSoul(ctx, r.Client, agent)
+		if err != nil {
 			return err
+		}
+		if agentUsesCopilotSoulInstructions(agent) {
+			role, err := resolveACPSystemPrompt(ctx, r.Client, agent)
+			if err != nil {
+				return err
+			}
+			if err := acp.ValidateCopilotInstructions(agentcontext.Compose(role, soul)); err != nil {
+				return err
+			}
 		}
 	}
 	return r.validateCoordination(ctx, agent)
@@ -446,13 +458,31 @@ func (r *AgentReconciler) checkTTLExpiry(ctx context.Context, agent *corev1alpha
 	return ctrl.Result{}, true
 }
 
-// agentSoulConfigMapNameIndex tracks explicit soul sources, not role prompts or skills.
-func agentSoulConfigMapNameIndex(object client.Object) []string {
+// agentUsesCopilotSoulInstructions scopes native prompt readiness validation and
+// its role-source dependencies without changing no-soul or other-runtime behavior.
+func agentUsesCopilotSoulInstructions(agent *corev1alpha1.Agent) bool {
+	return agent != nil && agent.Spec.Soul != nil && agent.Spec.Runtime != nil &&
+		agent.Spec.Runtime.Type == corev1alpha1.AgentRuntimeCopilot && agent.Spec.Runtime.RuntimeRef == nil &&
+		agent.BuiltInContractVersion() == corev1alpha1.AgentRuntimeContractHarnessV2
+}
+
+// agentSoulConfigMapDependencyIndex is a cache-only dependency index. In addition
+// to soul sources, v2 Copilot Agents with a soul depend on their composed role.
+func agentSoulConfigMapDependencyIndex(object client.Object) []string {
 	agent, ok := object.(*corev1alpha1.Agent)
-	if !ok || agent == nil || agent.Spec.Soul == nil || agent.Spec.Soul.ConfigMapRef == nil || agent.Spec.Soul.ConfigMapRef.Name == "" {
+	if !ok || agent == nil || agent.Spec.Soul == nil {
 		return nil
 	}
-	return []string{agent.Spec.Soul.ConfigMapRef.Name}
+	names := make([]string, 0, 2)
+	if ref := agent.Spec.Soul.ConfigMapRef; ref != nil && ref.Name != "" {
+		names = append(names, ref.Name)
+	}
+	if agentUsesCopilotSoulInstructions(agent) && agent.Spec.SystemPrompt != nil {
+		if ref := agent.Spec.SystemPrompt.ConfigMapRef; ref != nil && ref.Name != "" && !slices.Contains(names, ref.Name) {
+			names = append(names, ref.Name)
+		}
+	}
+	return names
 }
 
 // agentsForSoulConfigMap works for creation and deletion too: it maps declared
@@ -464,7 +494,7 @@ func (r *AgentReconciler) agentsForSoulConfigMap(ctx context.Context, object cli
 	}
 	var agents corev1alpha1.AgentList
 	if err := r.List(ctx, &agents, client.InNamespace(configMap.Namespace), client.MatchingFields{
-		agentSoulConfigMapNameField: configMap.Name,
+		agentSoulConfigMapDependenciesField: configMap.Name,
 	}); err != nil {
 		log.FromContext(ctx).Error(err, "Failed to list Agents referencing soul ConfigMap",
 			"namespace", configMap.Namespace, "configMap", configMap.Name)
@@ -479,7 +509,7 @@ func (r *AgentReconciler) agentsForSoulConfigMap(ctx context.Context, object cli
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1alpha1.Agent{}, agentSoulConfigMapNameField, agentSoulConfigMapNameIndex); err != nil {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1alpha1.Agent{}, agentSoulConfigMapDependenciesField, agentSoulConfigMapDependencyIndex); err != nil {
 		return fmt.Errorf("index agent soul ConfigMap references: %w", err)
 	}
 	return ctrl.NewControllerManagedBy(mgr).

@@ -54,6 +54,60 @@ func (s *Store) ReadSessionSoul(ctx context.Context, namespace, name, taskName, 
 	return state, nil
 }
 
+// EnsureSessionSoulWithLock pins a non-Gateway Session before a worker starts.
+// The existing hidden anchor survives empty turns and failed transcript writes;
+// no transcript content or visible message count is created by this operation.
+func (s *Store) EnsureSessionSoulWithLock(ctx context.Context, namespace, name, taskName, taskUID, digest string) error {
+	if err := store.ValidateCanonicalDigest("Session soul digest", digest); err != nil {
+		return err
+	}
+	if taskName == "" || taskUID == "" {
+		return store.ConflictErrorf("Task identity is required to pin Session soul context")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	var ownerType, sessionType string
+	if err := tx.QueryRowContext(ctx, `SELECT owner_type, session_type FROM sessions WHERE namespace = ? AND name = ?`,
+		namespace, name).Scan(&ownerType, &sessionType); errors.Is(err, sql.ErrNoRows) {
+		return store.ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if ownerType == gatewaySessionOwnerType || sessionType == store.SessionTypeGateway {
+		return store.ConflictErrorf("Gateway owns its canonical Session soul context")
+	}
+	// This also checks expiry and the cross-store cleanup fence.
+	if err := verifySessionWriteLockTx(ctx, tx, namespace, name, taskName, taskUID); err != nil {
+		return err
+	}
+	var existing sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT json_extract(metadata_json, '$."orka.ai/soul-configuration-digest"')
+		FROM session_messages WHERE namespace = ? AND session_name = ? ORDER BY sort_order, id LIMIT 1`, namespace, name).Scan(&existing)
+	if err == nil {
+		if existing.String != digest {
+			return store.ErrSessionConfigurationMismatch
+		}
+		return tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	metadata, err := json.Marshal(map[string]string{store.SessionSoulDigestMetadata: digest})
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO session_messages
+		(namespace, session_name, message_id, sort_order, role, content, source_type, source_ref, metadata_json, created_at)
+		VALUES (?, ?, 'orka:soul-context', 0, 'system', '', ?, '', ?, CURRENT_TIMESTAMP)`,
+		namespace, name, store.SessionSoulAnchorSource, string(metadata)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // retainGatewaySoulAnchorTx removes expired conversation content while keeping
 // its first instruction revision as digest-only Session metadata. It stays in
 // the existing schema, is invisible to transcript readers, and is deleted with

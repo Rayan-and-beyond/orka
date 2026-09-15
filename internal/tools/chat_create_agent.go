@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	corev1alpha1 "github.com/orka-agents/orka/api/v1alpha1"
+	"github.com/orka-agents/orka/internal/agentcontext"
 	"github.com/orka-agents/orka/internal/executionmode"
 	"github.com/orka-agents/orka/internal/labels"
 	"github.com/orka-agents/orka/internal/tracing"
@@ -182,6 +183,9 @@ func (t *ChatCreateAgentTool) Execute(ctx context.Context, args json.RawMessage)
 		)
 	}
 	parseCoordinationConfig(a, agent)
+	if err := agentcontext.ValidateSoulRuntime(agent); err != nil {
+		return ChatToolErrorResult("invalid_arguments", err.Error(), "Use an AI worker Agent or a built-in orka.harness.v2 Agent; external runtimeRef and orka.harness.v1 Agents do not support souls.")
+	}
 
 	if chatGetStringArg(a, "initialPrompt") != "" && tc.AuthorizeAgentInitialTask != nil {
 		if err := tc.AuthorizeAgentInitialTask(ctx, agent); err != nil {

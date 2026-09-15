@@ -33,7 +33,7 @@ func newAgentSoulWatchReconciler(t *testing.T, objects ...client.Object) *AgentR
 	require.NoError(t, corev1alpha1.AddToScheme(scheme))
 	c := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&corev1alpha1.Agent{}).
-		WithIndex(&corev1alpha1.Agent{}, agentSoulConfigMapNameField, agentSoulConfigMapNameIndex).
+		WithIndex(&corev1alpha1.Agent{}, agentSoulConfigMapDependenciesField, agentSoulConfigMapDependencyIndex).
 		WithObjects(objects...).Build()
 	return &AgentReconciler{Client: c, Scheme: scheme}
 }
@@ -207,4 +207,80 @@ func TestAgentSoulConfigMapWatchReadinessTransitions(t *testing.T) {
 	require.NoError(t, r.Create(ctx, configMap))
 	reconcileMap()
 	assertReady(true, "")
+}
+
+func TestAgentSoulConfigMapWatchCopilotRoleDependencies(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*corev1alpha1.Agent)
+		want   bool
+	}{
+		{name: "inline soul", want: true},
+		{name: "ConfigMap soul", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Soul = agentForSoulWatch("source").Spec.Soul }, want: true},
+		{name: "shared role and soul ConfigMap", mutate: func(agent *corev1alpha1.Agent) {
+			agent.Spec.Soul = agentForSoulWatch("source").Spec.Soul
+			agent.Spec.Soul.ConfigMapRef.Name = copilotInstructionsRoleMapName
+		}, want: true},
+		{name: "another namespace", mutate: func(agent *corev1alpha1.Agent) { agent.Namespace = "another-namespace" }},
+		{name: "no soul", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Soul = nil }},
+		{name: "AI", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Runtime = nil }},
+		{name: "Claude", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Runtime.Type = corev1alpha1.AgentRuntimeClaude }},
+		{name: "legacy Copilot", mutate: func(agent *corev1alpha1.Agent) {
+			agent.Spec.Runtime.ContractVersion = new(corev1alpha1.AgentRuntimeContractHarnessV1)
+		}},
+		{name: "unclassified Copilot", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Runtime.ContractVersion = nil }},
+		{name: "runtimeRef", mutate: func(agent *corev1alpha1.Agent) {
+			agent.Spec.Runtime.Type = ""
+			agent.Spec.Runtime.RuntimeRef = &corev1alpha1.AgentRuntimeReference{Name: "external"}
+			agent.Spec.Runtime.ContractVersion = nil
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			agent := copilotSoulInstructionsAgent("role-dependent")
+			agent.Spec.SystemPrompt = &corev1alpha1.PromptSource{ConfigMapRef: &corev1alpha1.ConfigMapKeySelector{Name: copilotInstructionsRoleMapName, Key: copilotInstructionsRoleMapKey}}
+			if test.mutate != nil {
+				test.mutate(agent)
+			}
+			r := newAgentSoulWatchReconciler(t, agent)
+			roleMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: copilotInstructionsRoleMapName, Namespace: testNS}}
+			requests := r.agentsForSoulConfigMap(context.Background(), roleMap)
+			if test.want {
+				want := []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(agent)}}
+				require.Equal(t, want, requests)
+				dependencies := []string{roleMap.Name}
+				if ref := agent.Spec.Soul.ConfigMapRef; ref != nil {
+					soulMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: agent.Namespace}}
+					require.Equal(t, want, r.agentsForSoulConfigMap(context.Background(), soulMap))
+					if ref.Name != roleMap.Name {
+						dependencies = append(dependencies, ref.Name)
+					}
+				}
+				require.ElementsMatch(t, dependencies, agentSoulConfigMapDependencyIndex(agent))
+			} else {
+				require.Empty(t, requests)
+			}
+		})
+	}
+}
+
+func TestAgentSoulConfigMapWatchCopilotRoleReferenceChanges(t *testing.T) {
+	ctx := context.Background()
+	agent := copilotSoulInstructionsAgent("role-retargeted")
+	agent.Spec.SystemPrompt = &corev1alpha1.PromptSource{ConfigMapRef: &corev1alpha1.ConfigMapKeySelector{Name: copilotInstructionsRoleMapName, Key: copilotInstructionsRoleMapKey}}
+	r := newAgentSoulWatchReconciler(t, agent)
+	original := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: copilotInstructionsRoleMapName, Namespace: testNS}}
+	replacement := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "replacement-role", Namespace: testNS}}
+	want := []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(agent)}}
+	require.Equal(t, want, r.agentsForSoulConfigMap(ctx, original))
+	require.Empty(t, r.agentsForSoulConfigMap(ctx, replacement))
+
+	require.NoError(t, r.Get(ctx, client.ObjectKeyFromObject(agent), agent))
+	agent.Spec.SystemPrompt.ConfigMapRef.Name = replacement.Name
+	require.NoError(t, r.Update(ctx, agent))
+	require.Empty(t, r.agentsForSoulConfigMap(ctx, original))
+	require.Equal(t, want, r.agentsForSoulConfigMap(ctx, replacement))
+
+	agent.Spec.Soul = nil
+	require.NoError(t, r.Update(ctx, agent))
+	require.Empty(t, r.agentsForSoulConfigMap(ctx, replacement))
 }
