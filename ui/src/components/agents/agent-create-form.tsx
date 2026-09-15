@@ -32,6 +32,7 @@ export function AgentCreateForm() {
   const [maxTokens, setMaxTokens] = useState('')
   const [secretRef, setSecretRef] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
+  const [soul, setSoul] = useState('')
 
   // ACP runtime mode selects either an Orka-managed profile or a registered v2 runtime.
   const [runtimeSource, setRuntimeSource] = useState<'built-in' | 'external'>('built-in')
@@ -106,6 +107,15 @@ export function AgentCreateForm() {
           ? { name: trimmedModel, contextWindow: parsedContextWindow, maxTokens: parsedMaxTokens }
           : { name: trimmedModel }
       }
+    }
+
+    if (mode === 'ai' || runtimeSource === 'built-in') {
+      if (new TextEncoder().encode(soul).length > 8192) {
+        toast.error('Soul must not exceed 8192 UTF-8 bytes')
+        return
+      }
+      if (soul.trim()) spec.soul = { inline: soul }
+      if (systemPrompt) spec.systemPrompt = { inline: systemPrompt }
     }
 
     try {
@@ -291,6 +301,15 @@ export function AgentCreateForm() {
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {(mode === 'ai' || runtimeSource === 'built-in') && (
+              <div className="space-y-2">
+                <label htmlFor="agent-soul" className="text-sm font-medium">Soul (optional)</label>
+                <textarea className="flex min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" id="agent-soul" value={soul} onChange={(e) => setSoul(e.target.value)} rows={5} maxLength={8192}
+                  placeholder="Persistent persona and communication defaults, separate from role instructions." />
+                <p className="text-xs text-muted-foreground">Maximum 8 KiB. New revisions require a new Session. Use YAML for digest-pinned ConfigMap sources.</p>
               </div>
             )}
 

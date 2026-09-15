@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"k8s.io/apimachinery/pkg/types"
 
@@ -27,7 +26,7 @@ func (t *UpdateAgentTool) Description() string {
 }
 
 func (t *UpdateAgentTool) Parameters() json.RawMessage {
-	return mustMarshalSchema(map[string]any{jsonSchemaTypeField: jsonSchemaTypeObject, jsonSchemaPropertiesField: map[string]any{nameField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: agentNameDescription}, namespaceField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: namespaceDescription}, systemPromptField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: "System prompt for the agent. OpenCode runtime Agents do not support Agent system prompts; use Task prompts instead."}, toolsField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeArray, itemsField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString}, jsonSchemaDescriptionField: "Tool names to attach"}, modelField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeObject, jsonSchemaPropertiesField: map[string]any{
+	return marshalAgentSchema(map[string]any{jsonSchemaTypeField: jsonSchemaTypeObject, jsonSchemaPropertiesField: map[string]any{nameField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: agentNameDescription}, namespaceField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: namespaceDescription}, systemPromptField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: "Role instructions for the agent. Built-in runtimes deliver these through their native instruction mechanism."}, toolsField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeArray, itemsField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString}, jsonSchemaDescriptionField: "Tool names to attach"}, modelField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeObject, jsonSchemaPropertiesField: map[string]any{
 		"provider": map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: "Model provider (e.g. anthropic, openai). For OpenCode this is normalized into model.name."},
 		nameField:  map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: "Model name. OpenCode accepts a provider/model ID or a bare model name when the existing provider is retained."},
 		"temperature": map[string]any{jsonSchemaTypeField: "number", "minimum": 0, "maximum": 2,
@@ -84,6 +83,13 @@ func (t *UpdateAgentTool) Execute(ctx context.Context, args json.RawMessage) (st
 		}
 	}
 
+	if value, supplied := a["soul"]; supplied {
+		source, err := soulArgument(value)
+		if err != nil {
+			return ChatToolErrorResult("invalid_arguments", err.Error(), "Provide inline Markdown or a ConfigMap reference with an expected digest.")
+		}
+		agent.Spec.Soul = source
+	}
 	if requestedSystemPrompt != "" {
 		agent.Spec.SystemPrompt = &corev1alpha1.PromptSource{
 			Inline: requestedSystemPrompt,
@@ -98,25 +104,13 @@ func (t *UpdateAgentTool) Execute(ctx context.Context, args json.RawMessage) (st
 	}
 
 	if isOpenCodeAgent(agent) {
-		if agent.Spec.SystemPrompt != nil &&
-			(strings.TrimSpace(agent.Spec.SystemPrompt.Inline) != "" || agent.Spec.SystemPrompt.ConfigMapRef != nil) {
-			return ChatToolErrorResult(
-				"invalid_arguments",
-				"opencode runtime does not support systemPrompt",
-				"Remove spec.systemPrompt and use Task prompts for OpenCode instructions.",
-			)
-		}
+
 		if result, ok := normalizeChatOpenCodeModel(agent); !ok {
 			return result, nil
 		}
 	}
 
-	// Re-fetch before update to avoid conflicts
-	latest := &corev1alpha1.Agent{}
-	if err := tc.Client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, latest); err != nil {
-		return classifyChatK8sErr(err)
-	}
-	agent.ResourceVersion = latest.ResourceVersion
+	// Keep the version whose fields were edited; concurrent publication must conflict.
 	if result, ok := authorizeAgentUpdate(ctx, tc, agent); !ok {
 		return result, nil
 	}

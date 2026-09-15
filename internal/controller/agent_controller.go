@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orka-agents/orka/internal/agentcontext"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -135,6 +137,14 @@ func (r *AgentReconciler) validateAgent(ctx context.Context, agent *corev1alpha1
 	}
 	if err := r.validateSystemPromptConfigMap(ctx, agent); err != nil {
 		return err
+	}
+	if agent.Spec.Soul != nil {
+		if err := validateSoulRuntime(agent); err != nil {
+			return err
+		}
+		if _, err := agentcontext.ResolveSoul(ctx, r.Client, agent); err != nil {
+			return err
+		}
 	}
 	return r.validateCoordination(ctx, agent)
 }

@@ -69,6 +69,7 @@ describe('AgentCreateForm', () => {
     expect(screen.getByText('Temperature')).toBeInTheDocument()
     expect(screen.getByText('Max Tokens')).toBeInTheDocument()
     expect(screen.getByText('Secret Reference')).toBeInTheDocument()
+    expect(screen.getByLabelText('Soul (optional)')).toBeInTheDocument()
   })
 
   it('shows all built-in ACP runtime options without legacy loop controls', async () => {
