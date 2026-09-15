@@ -10,7 +10,7 @@ description: "Building, running, and regenerating Orka locally."
 | Tool | Version | Notes |
 | --- | --- | --- |
 | Go | 1.26.2 or newer | `go.mod` sets `go 1.26.2` and pins `toolchain go1.27.0`, so Go downloads 1.27.0 for you. CI builds on 1.27. |
-| Bun | current | Builds the React dashboard, which is embedded into the controller binary. |
+| Bun | current | Builds the React dashboard, which is embedded into the controller binary. Bun 1.4.2 has a [known Windows/WSL setup issue](#windows-bsod-during-ui-dependency-installation); use 1.3.13 there. |
 | Docker | with BuildKit | The Dockerfiles use BuildKit syntax. Docker Desktop and any modern Docker Engine have it on by default. |
 | kubectl | matching your cluster | |
 | A Kubernetes cluster | | [kind](https://kind.sigs.k8s.io/) is fine for development. |
@@ -265,6 +265,47 @@ make manifests
 
 See [Helm Chart Generation and Releases](#helm-chart-generation-and-releases)
 for how staging output is promoted into `deploy/` at release time.
+
+## Setup gotchas
+
+### Windows BSOD during UI dependency installation
+
+:::note[Known issue with Bun 1.4.2 on Windows/WSL]
+
+On Windows, Bun 1.4.2 may cause a BSOD while `make ui-install` runs
+`bun install`. If this happens, remove Bun 1.4.2 and install the version
+currently used by Orka CI (`1.3.13`):
+
+For native Windows Bun, run:
+
+```powershell
+& "$env:USERPROFILE\.bun\uninstall.ps1"
+iex "& {$(irm https://bun.com/install.ps1)} -Version 1.3.13"
+```
+
+For Bun installed inside WSL, run:
+
+```bash
+rm -rf "$HOME/.bun"
+curl -fsSL https://bun.com/install | bash -s "bun-v1.3.13"
+```
+
+Restart the terminal and verify the installed version:
+
+```bash
+bun --version
+```
+
+The command should report `1.3.13`. Then retry:
+
+```bash
+make ui-install
+```
+
+If Orka CI moves to a newer Bun version, check the `bun-version` in
+`.github/workflows/test.yml` before applying this workaround.
+
+:::
 
 ## Build gotchas
 
