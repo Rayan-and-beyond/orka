@@ -206,31 +206,28 @@ func (t *WebFetchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	var extractor string
 	var feedOmitted bool
 
-	switch {
-	case strings.Contains(contentType, "application/json"):
-		content, extractor = t.extractJSON(body)
-	case strings.Contains(contentType, "text/html"):
-		if fetchArgs.Raw {
-			content = string(body)
-			extractor = extractorRaw
-		} else {
+	if !fetchArgs.Raw {
+		// Detect the document root before MIME dispatch: feeds are sometimes
+		// served as HTML. Non-feed roots retain the existing MIME-specific path.
+		// Resolve links against the final URL after the guarded redirect path,
+		// without making any additional requests.
+		feedBase := parsed
+		if resp.Request != nil && resp.Request.URL != nil {
+			feedBase = resp.Request.URL
+		}
+		content, extractor, feedOmitted, err = extractWebFeed(body, contentType, feedBase, t.allowPrivateForTests, retrievedAt)
+		if err != nil {
+			return "", err
+		}
+	}
+	if extractor == "" {
+		switch {
+		case strings.Contains(contentType, "application/json"):
+			content, extractor = t.extractJSON(body)
+		case strings.Contains(contentType, "text/html") && !fetchArgs.Raw:
 			content = extractText(body)
 			extractor = "html_text"
-		}
-	default:
-		if !fetchArgs.Raw {
-			// Resolve relative feed links against the final URL after the existing
-			// guarded redirect path, without making any additional requests.
-			feedBase := parsed
-			if resp.Request != nil && resp.Request.URL != nil {
-				feedBase = resp.Request.URL
-			}
-			content, extractor, feedOmitted, err = extractWebFeed(body, contentType, feedBase, t.allowPrivateForTests, retrievedAt)
-			if err != nil {
-				return "", err
-			}
-		}
-		if extractor == "" {
+		default:
 			content = string(body)
 			extractor = extractorRaw
 		}

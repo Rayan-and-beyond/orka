@@ -231,10 +231,12 @@ func (feed *webFeed) readLink(decoder *xml.Decoder, child xml.StartElement, base
 	rel := webFeedAttr(child, "", "rel")
 	if rel == "" || rel == "alternate" {
 		rank := 1
-		switch webFeedAttr(child, "", "type") {
-		case "":
+		linkType := webFeedAttr(child, "", "type")
+		mediaType, _, typeErr := mime.ParseMediaType(linkType)
+		switch {
+		case linkType == "":
 			rank = 2
-		case "text/html", "application/xhtml+xml":
+		case typeErr == nil && (mediaType == "text/html" || mediaType == "application/xhtml+xml"):
 			rank = 3
 		}
 		link := safeWebFeedURL(webFeedAttr(child, "", "href"), base, feed.allowPrivate)
@@ -312,7 +314,10 @@ func safeWebFeedURL(reference string, base *url.URL, allowPrivate bool) *url.URL
 		return nil // Reject scoped IP literals too; ParseIP does not accept zones.
 	}
 	if !allowPrivate {
-		host := strings.TrimSuffix(parsed.Hostname(), ".")
+		host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+		if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+			return nil // These names are loopback destinations without a DNS lookup.
+		}
 		if address := net.ParseIP(host); address != nil {
 			if !tokenexchange.IsPublicAddress(address) {
 				return nil

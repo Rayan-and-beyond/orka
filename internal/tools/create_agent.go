@@ -115,7 +115,7 @@ func (t *CreateAgentTool) Description() string {
 
 // Parameters returns the JSON Schema for parameters
 func (t *CreateAgentTool) Parameters() json.RawMessage {
-	return json.RawMessage(`{
+	return withOpenCodePromptLimits(json.RawMessage(`{
 		"type": "object",
 		"properties": {
 			"role": {
@@ -219,7 +219,7 @@ func (t *CreateAgentTool) Parameters() json.RawMessage {
 			}
 		},
 		"required": ["role"]
-	}`)
+	}`))
 }
 
 func isBuiltInACPRuntime(runtimeType corev1alpha1.AgentRuntimeType) bool {
@@ -435,7 +435,7 @@ func (t *CreateAgentTool) Execute(ctx context.Context, args json.RawMessage) (st
 			Skills:      skillRefs,
 		},
 	}
-	if strings.TrimSpace(a.SystemPrompt) != "" {
+	if a.SystemPrompt != "" {
 		agent.Spec.SystemPrompt = &corev1alpha1.PromptSource{Inline: a.SystemPrompt}
 	}
 
