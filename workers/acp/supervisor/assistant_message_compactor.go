@@ -11,7 +11,11 @@ import (
 	harnessv2 "github.com/orka-agents/orka/internal/harness/v2"
 )
 
-const assistantMessageCoalesceWindow = 25 * time.Millisecond
+const (
+	assistantMessageCoalesceWindow = 25 * time.Millisecond
+	acpUpdateAgentMessageChunk     = "agent_message_chunk"
+	acpUpdateAgentThoughtChunk     = "agent_thought_chunk"
+)
 
 // assistantMessageCompactor batches only adjacent ACP assistant text deltas.
 // It runs before harness identity assignment so emitted sequences remain
@@ -57,7 +61,13 @@ func (c *assistantMessageCompactor) push(event acp.PromptEvent, arrivedAt time.T
 	}
 	text := chunk.Content.Text
 	if text == "" {
-		return ready
+		// Empty text still carries message identity. Preserve its place in the
+		// stream so an empty first/last message cannot disappear before the
+		// provider-specific final-result selector observes it.
+		if c.text.Len() > 0 {
+			ready = append(ready, c.flush())
+		}
+		return append(ready, event)
 	}
 	if c.text.Len() > 0 && (event.Update.SessionID != c.pending.Update.SessionID ||
 		chunk.MessageID != c.messageID || !bytes.Equal(chunk.Meta, c.meta)) {
@@ -105,8 +115,6 @@ func (c *assistantMessageCompactor) arm(now time.Time) {
 }
 
 func (c *assistantMessageCompactor) flush() acp.PromptEvent {
-	const acpUpdateAgentMessageChunk = "agent_message_chunk"
-
 	event := c.pending
 	encoded, err := json.Marshal(struct {
 		SessionUpdate string `json:"sessionUpdate"`
@@ -167,8 +175,6 @@ type assistantMessageChunk struct {
 }
 
 func decodeAssistantMessageChunk(event acp.PromptEvent) (assistantMessageChunk, bool) {
-	const acpUpdateAgentMessageChunk = "agent_message_chunk"
-
 	var envelope assistantMessageChunk
 	if event.Type != acp.PromptEventUpdate || event.Update == nil {
 		return envelope, false

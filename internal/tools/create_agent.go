@@ -124,7 +124,7 @@ func (t *CreateAgentTool) Parameters() json.RawMessage {
 			},
 			"systemPrompt": {
 				"type": "string",
-				"description": "System prompt for the agent. Required unless runtime.type is opencode; OpenCode cannot enforce Agent system prompts, so omit this field and use task prompts instead."
+				"description": "System prompt for the agent. Required unless runtime.type is opencode; OpenCode accepts an optional bounded literal prompt without environment or file substitutions."
 			},
 			"model": {
 				"type": "object",
@@ -323,8 +323,8 @@ func (t *CreateAgentTool) Execute(ctx context.Context, args json.RawMessage) (st
 		}
 	}
 	if runtimeType == string(corev1alpha1.AgentRuntimeOpencode) {
-		if strings.TrimSpace(a.SystemPrompt) != "" {
-			return "", fmt.Errorf("opencode runtime does not support systemPrompt; omit it and use task prompts for instructions")
+		if err := acp.ValidateOpenCodeSystemPrompt(a.SystemPrompt); err != nil {
+			return "", err
 		}
 	} else if strings.TrimSpace(a.SystemPrompt) == "" {
 		return "", fmt.Errorf("systemPrompt is required")

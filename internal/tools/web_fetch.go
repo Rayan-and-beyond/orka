@@ -30,6 +30,7 @@ type WebFetchTool struct {
 	allowPrivateForTests bool
 	maxChars             int
 	maxURLBytes          int
+	now                  func() time.Time // Private test seam; nil uses the server clock.
 }
 
 // WebFetchArgs are the arguments for the web fetch tool
@@ -192,9 +193,18 @@ func (t *WebFetchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
+	// Record completion of this retrieval using the server clock, never a
+	// response Date header, feed field, or caller-supplied argument.
+	now := time.Now
+	if t.now != nil {
+		now = t.now
+	}
+	retrievedAt := now()
+
 	contentType := resp.Header.Get("Content-Type")
 	var content string
 	var extractor string
+	var feedOmitted bool
 
 	switch {
 	case strings.Contains(contentType, "application/json"):
@@ -208,8 +218,22 @@ func (t *WebFetchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 			extractor = "html_text"
 		}
 	default:
-		content = string(body)
-		extractor = extractorRaw
+		if !fetchArgs.Raw {
+			// Resolve relative feed links against the final URL after the existing
+			// guarded redirect path, without making any additional requests.
+			feedBase := parsed
+			if resp.Request != nil && resp.Request.URL != nil {
+				feedBase = resp.Request.URL
+			}
+			content, extractor, feedOmitted, err = extractWebFeed(body, contentType, feedBase, t.allowPrivateForTests, retrievedAt)
+			if err != nil {
+				return "", err
+			}
+		}
+		if extractor == "" {
+			content = string(body)
+			extractor = extractorRaw
+		}
 	}
 
 	content, contentLength, truncated := truncateByRuneCount(content, fetchArgs.MaxChars)
@@ -219,7 +243,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		Status:    resp.StatusCode,
 		Content:   content,
 		Length:    contentLength,
-		Truncated: truncated,
+		Truncated: truncated || feedOmitted,
 		Extractor: extractor,
 	}
 
