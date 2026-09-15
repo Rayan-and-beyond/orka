@@ -47,7 +47,12 @@ func TestWebFetchFeedAtomPrefersParameterizedArticleMediaTypes(t *testing.T) {
 }
 
 func TestWebFetchFeedRejectsLocalhostLinksAndBases(t *testing.T) {
-	for _, link := range []string{"http://localhost/article", "https://localhost:8443/article", "http://localhost./article", "http://LOCALHOST/article", "http://console.localhost/article", "http://a.b.LoCaLhOsT.:8080/article"} {
+	for _, link := range []string{
+		"http://localhost/article", "https://localhost:8443/article", "http://localhost./article", "http://LOCALHOST/article",
+		"http://console.localhost/article", "http://a.b.LoCaLhOsT.:8080/article", "http://localhost。/article",
+		"http://console。localhost/article", "http://ＬＯＣＡＬＨＯＳＴ/article", "http://１２７．０．０．１/article",
+		"http://127。0。0。1/article", "http://０ｘ７ｆ０００００１/article",
+	} {
 		for _, format := range []string{"rss", "atom"} {
 			for _, asBase := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/base=%t", format, link, asBase), func(t *testing.T) {
@@ -117,6 +122,20 @@ func TestWebFetchRSSPermalinkGUIDFallback(t *testing.T) {
 					t.Fatal("expected one grounding link")
 				}
 			}
+		})
+	}
+}
+
+func TestWebFetchFeedCanonicalizesPublicIDNLinksAndBases(t *testing.T) {
+	for _, test := range []struct{ name, body, want string }{
+		{"rss", `<rss version="2.0"><channel><item><title>Article</title><link>https://bücher.example.test:8443/article?q=1</link></item></channel></rss>`, "https://xn--bcher-kva.example.test:8443/article?q=1"},
+		{"rss guid", `<rss version="2.0"><channel><item><title>Article</title><guid>https://bücher.example.test./article</guid></item></channel></rss>`, "https://xn--bcher-kva.example.test./article"},
+		{"atom base", `<feed xmlns="http://www.w3.org/2005/Atom"><entry xml:base="https://bücher.example.test:8443/edition/"><title>Article</title><link href="article"/></entry></feed>`, "https://xn--bcher-kva.example.test:8443/edition/article"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tool, base := serveWebFeed(t, test.body, "application/xml")
+			result, _ := executeWebFeed(t, tool, WebFetchArgs{URL: base})
+			assertWebFeedContains(t, result.Content, "[Article](<"+test.want+">)")
 		})
 	}
 }

@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/idna"
+
 	"github.com/orka-agents/orka/internal/tokenexchange"
 )
 
@@ -353,6 +355,23 @@ func safeWebFeedURL(reference string, base *url.URL, allowPrivate bool) *url.URL
 	}
 	if validateWebFetchURL(parsed, allowPrivate) != nil || strings.Contains(parsed.Hostname(), "%") {
 		return nil // Reject scoped IP literals too; ParseIP does not accept zones.
+	}
+	hostname := parsed.Hostname()
+	if net.ParseIP(hostname) == nil {
+		// Browsers normalize IDNs, including Unicode dots and fullwidth digits,
+		// before interpreting local/numeric hosts. Check and emit the same ASCII
+		// authority so a rendered link cannot bypass the local-address guard.
+		asciiHost, err := idna.Lookup.ToASCII(hostname)
+		if err != nil {
+			return nil
+		}
+		if asciiHost != hostname {
+			if port := parsed.Port(); port != "" {
+				parsed.Host = net.JoinHostPort(asciiHost, port)
+			} else {
+				parsed.Host = asciiHost
+			}
+		}
 	}
 	if !allowPrivate {
 		host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
