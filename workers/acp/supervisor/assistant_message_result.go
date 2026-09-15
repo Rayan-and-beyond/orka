@@ -3,7 +3,9 @@ package supervisor
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/orka-agents/orka/internal/acp"
 )
@@ -97,6 +99,51 @@ func openCodeAssistantMessageIdentity(notification *acp.SessionNotification) (st
 		if err := json.Unmarshal(envelope.MessageID, &messageID); err != nil {
 			return "", false, errors.New("invalid OpenCode assistant message identity")
 		}
+		if !wellFormedAssistantIdentityUnicode(envelope.MessageID) {
+			return "", false, errors.New("invalid OpenCode assistant message identity Unicode")
+		}
 	}
 	return messageID, true, nil
+}
+
+// encoding/json repairs invalid UTF-8 and unpaired UTF-16 escapes. Identity
+// must never use that lossy repair: distinct malformed IDs would otherwise
+// collapse to the same map key. The caller already validates JSON syntax and
+// the string/null shape; inspect the original bytes before using the value.
+func wellFormedAssistantIdentityUnicode(raw json.RawMessage) bool {
+	if !utf8.Valid(raw) {
+		return false
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(raw) {
+			return false
+		}
+		if raw[i] != 'u' {
+			continue // Includes an escaped literal backslash before "u...".
+		}
+		if i+4 >= len(raw) {
+			return false
+		}
+		first, err := strconv.ParseUint(string(raw[i+1:i+5]), 16, 16)
+		if err != nil {
+			return false
+		}
+		i += 4
+		if first < 0xd800 || first > 0xdfff {
+			continue
+		}
+		if first > 0xdbff || i+6 >= len(raw) || raw[i+1] != '\\' || raw[i+2] != 'u' {
+			return false
+		}
+		second, err := strconv.ParseUint(string(raw[i+3:i+7]), 16, 16)
+		if err != nil || second < 0xdc00 || second > 0xdfff {
+			return false
+		}
+		i += 6
+	}
+	return true
 }

@@ -215,6 +215,9 @@ func (feed *webFeed) readFields(decoder *xml.Decoder, parent xml.StartElement, b
 		if item && name == "link" {
 			return feed.readLink(decoder, child, childBase, fields)
 		}
+		if item && isRSS && name == "guid" {
+			return feed.readRSSGUID(decoder, child, childBase, fields)
+		}
 		return feed.readTextField(decoder, child, fields, item)
 	})
 }
@@ -225,7 +228,11 @@ func (feed *webFeed) readLink(decoder *xml.Decoder, child xml.StartElement, base
 		if err := decoder.DecodeElement(&link, &child); err != nil {
 			return err
 		}
-		fields.link = safeWebFeedURL(link, base, feed.allowPrivate)
+		if candidate := safeWebFeedURL(link, base, feed.allowPrivate); candidate != nil {
+			// An explicit RSS link outranks the optional permalink GUID,
+			// regardless of their order in the document.
+			fields.link, fields.linkRank = candidate, 2
+		}
 		return nil
 	}
 	rel := webFeedAttr(child, "", "rel")
@@ -245,6 +252,26 @@ func (feed *webFeed) readLink(decoder *xml.Decoder, child xml.StartElement, base
 		}
 	}
 	return decoder.Skip()
+}
+
+// RSS GUIDs default to permalinks when isPermaLink is absent. Explicit
+// non-true flags and opaque identifiers must not become grounding URLs.
+func (feed *webFeed) readRSSGUID(decoder *xml.Decoder, child xml.StartElement, base *url.URL, fields *webFeedFields) error {
+	for _, attr := range child.Attr {
+		if attr.Name == (xml.Name{Local: "isPermaLink"}) && attr.Value != "true" {
+			return decoder.Skip()
+		}
+	}
+	var guid string
+	if err := decoder.DecodeElement(&guid, &child); err != nil {
+		return err
+	}
+	if fields.linkRank == 0 {
+		if candidate := safeWebFeedURL(guid, base, feed.allowPrivate); candidate != nil {
+			fields.link, fields.linkRank = candidate, 1
+		}
+	}
+	return nil
 }
 
 func (feed *webFeed) readTextField(decoder *xml.Decoder, child xml.StartElement, fields *webFeedFields, item bool) error {
@@ -272,10 +299,24 @@ func (feed *webFeed) readTextField(decoder *xml.Decoder, child xml.StartElement,
 	if err := decoder.DecodeElement(&text, &child); err != nil {
 		return err
 	}
-	if !isRSS && webFeedAttr(child, "", "type") == "xhtml" {
-		text.Value = text.Inner
+	// RSS descriptions may contain HTML. Atom text constructs declare their
+	// markup type explicitly; scalar dates and default/text constructs remain
+	// literal after XML entity decoding, including escaped angle brackets.
+	markup := isRSS && name == "description"
+	if !isRSS && (name == "title" || name == "subtitle" || name == "summary") {
+		switch webFeedAttr(child, "", "type") {
+		case "html":
+			markup = true
+		case "xhtml":
+			markup = true
+			text.Value = text.Inner
+		}
 	}
-	*target = webFeedText(text.Value)
+	if markup {
+		*target = webFeedText(text.Value)
+	} else {
+		*target = webFeedLiteralText(text.Value)
+	}
 	return nil
 }
 
@@ -354,7 +395,11 @@ func webFeedText(value string) string {
 	// XML has already decoded XML entities/CDATA. Decode HTML entities before
 	// the existing script/style/tag stripping so encoded markup stays inert.
 	text := extractText([]byte(html.UnescapeString(value)))
-	return webFeedMarkdownEscaper.Replace(strings.Join(strings.Fields(text), " "))
+	return webFeedLiteralText(text)
+}
+
+func webFeedLiteralText(value string) string {
+	return webFeedMarkdownEscaper.Replace(strings.Join(strings.Fields(value), " "))
 }
 
 // Angle-delimited Markdown destinations still need escaping: URL.String

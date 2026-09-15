@@ -70,3 +70,53 @@ func TestWebFetchFeedRejectsLocalhostLinksAndBases(t *testing.T) {
 		}
 	}
 }
+
+func TestWebFetchFeedPreservesLiteralScalarText(t *testing.T) {
+	for _, format := range []string{"rss", "atom"} {
+		t.Run(format, func(t *testing.T) {
+			body := `<rss version="2.0"><channel><title>1 &lt; 2 &gt; 0</title><item><title>Literal &lt;b&gt;text&lt;/b&gt; &amp;lt;word&amp;gt;</title><description><![CDATA[<p>HTML <b>summary</b>.</p><script>hiddenMarkup()</script>]]></description></item></channel></rss>`
+			if format == "atom" {
+				body = `<feed xmlns="http://www.w3.org/2005/Atom"><title>1 &lt; 2 &gt; 0</title><entry><title type="text">Literal &lt;b&gt;text&lt;/b&gt; &amp;lt;word&amp;gt;</title><summary>1 &lt; 2 &gt; 0 &lt;script&gt;literalText()&lt;/script&gt;</summary></entry><entry><title>Markup</title><summary type="html">&lt;p&gt;HTML &lt;b&gt;summary&lt;/b&gt;.&lt;/p&gt;&lt;script&gt;hiddenMarkup()&lt;/script&gt;</summary></entry></feed>`
+			}
+			tool, base := serveWebFeed(t, body, "application/xml")
+			result, _ := executeWebFeed(t, tool, WebFetchArgs{URL: base})
+			assertWebFeedContains(t, result.Content, "feed: 1 &lt; 2 &gt; 0", "Literal &lt;b&gt;text&lt;/b&gt; &amp;lt;word&amp;gt;", "Feed summary: HTML summary .")
+			assertWebFeedExcludes(t, result.Content, "hiddenMarkup", "<b>", "<script>")
+			if format == "atom" {
+				assertWebFeedContains(t, result.Content, "Feed summary: 1 &lt; 2 &gt; 0 &lt;script&gt;literalText\\(\\)&lt;/script&gt;")
+			}
+		})
+	}
+}
+
+func TestWebFetchRSSPermalinkGUIDFallback(t *testing.T) {
+	for _, test := range []struct{ name, guid, attributes, before, after, want string }{
+		{"implicit", "https://news.example.test/article", "", "", "", "https://news.example.test/article"},
+		{"explicit", "https://news.example.test/article", ` isPermaLink="true"`, "", "", "https://news.example.test/article"},
+		{"non-permalink", "https://news.example.test/article", ` isPermaLink="false"`, "", "", ""},
+		{"empty flag", "https://news.example.test/article", ` isPermaLink=""`, "", "", ""},
+		{"opaque identifier", "urn:uuid:1234", ` isPermaLink="false"`, "", "", ""},
+		{"relative", "article", ` xml:base="https://news.example.test/edition/"`, "", "", "https://news.example.test/edition/article"},
+		{"explicit link first", "https://news.example.test/guid", "", `<link>https://news.example.test/link</link>`, "", "https://news.example.test/link"},
+		{"explicit link last", "https://news.example.test/guid", "", "", `<link>https://news.example.test/link</link>`, "https://news.example.test/link"},
+		{"unsafe link fallback", "https://news.example.test/guid", "", `<link>javascript:bad</link>`, "", "https://news.example.test/guid"},
+		{"private address", "http://127.0.0.1/article", "", "", "", ""},
+		{"local hostname", "http://console.localhost/article", "", "", "", ""},
+		{"unsafe scheme", "javascript:bad", "", "", "", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := `<rss version="2.0"><channel><item><title>Article</title>` + test.before + `<guid` + test.attributes + `>` + test.guid + `</guid>` + test.after + `</item></channel></rss>`
+			tool, base := serveWebFeed(t, body, "application/rss+xml")
+			result, _ := executeWebFeed(t, tool, WebFetchArgs{URL: base})
+			if test.want == "" {
+				assertWebFeedContains(t, result.Content, "Source link unavailable.")
+				assertWebFeedExcludes(t, result.Content, "](<")
+			} else {
+				assertWebFeedContains(t, result.Content, "[Article](<"+test.want+">)")
+				if strings.Count(result.Content, "](<") != 1 {
+					t.Fatal("expected one grounding link")
+				}
+			}
+		})
+	}
+}

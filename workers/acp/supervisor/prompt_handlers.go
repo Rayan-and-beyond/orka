@@ -286,6 +286,7 @@ func (s *Server) handleStartPrompt(w http.ResponseWriter, r *http.Request) {
 	}
 	mapAndEncode(first)
 	compactor := newAssistantMessageCompactor()
+	compactor.validateOpenCodeIdentity = state.profile.ProviderKind == providerKindOpencode
 	defer compactor.close()
 	events := run.Events
 	for events != nil {

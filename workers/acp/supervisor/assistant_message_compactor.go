@@ -22,14 +22,15 @@ const (
 // contiguous while the protocol rate limiter still sees every meaningful
 // lifecycle update.
 type assistantMessageCompactor struct {
-	maxBytes      int
-	flushInterval time.Duration
-	pending       acp.PromptEvent
-	text          strings.Builder
-	messageID     string
-	meta          json.RawMessage
-	deadline      time.Time
-	timer         *time.Timer
+	validateOpenCodeIdentity bool
+	maxBytes                 int
+	flushInterval            time.Duration
+	pending                  acp.PromptEvent
+	text                     strings.Builder
+	messageID                string
+	meta                     json.RawMessage
+	deadline                 time.Time
+	timer                    *time.Timer
 }
 
 func newAssistantMessageCompactor() *assistantMessageCompactor {
@@ -53,6 +54,14 @@ func (c *assistantMessageCompactor) push(event acp.PromptEvent, arrivedAt time.T
 	}
 
 	chunk, isAssistantText := decodeAssistantMessageChunk(event)
+	if isAssistantText && c.validateOpenCodeIdentity {
+		// Do not let JSON decoding/coalescing repair a malformed identity.
+		// Forward the original event so the provider-specific consumer records
+		// its authoritative, replay-stable failure before any final result.
+		if _, _, err := openCodeAssistantMessageIdentity(event.Update); err != nil {
+			isAssistantText = false
+		}
+	}
 	if !isAssistantText {
 		if c.text.Len() > 0 {
 			ready = append(ready, c.flush())

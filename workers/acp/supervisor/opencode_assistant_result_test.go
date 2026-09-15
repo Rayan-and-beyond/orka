@@ -28,10 +28,13 @@ const assistantResultThoughtFixture = "synthetic reasoning must never appear in 
 // These are synthetic ACP wire fixtures, not provider responses or credentials.
 // The subprocess receives them as the prompt's text, then emits real ACP updates.
 type assistantResultTestChunk struct {
-	MessageID string `json:"messageId,omitempty"`
-	Text      string `json:"text"`
-	Thought   bool   `json:"thought,omitempty"`
-	Phase     string `json:"phase,omitempty"`
+	// Byte encoding preserves malformed Unicode until the helper emits the raw
+	// JSON identity on its ACP stream; the enclosing test prompt stays valid.
+	RawMessageID []byte `json:"rawMessageId,omitempty"`
+	MessageID    string `json:"messageId,omitempty"`
+	Text         string `json:"text"`
+	Thought      bool   `json:"thought,omitempty"`
+	Phase        string `json:"phase,omitempty"`
 }
 
 func TestSupervisorOpenCodeAssistantResultHTTP(t *testing.T) {
@@ -730,7 +733,9 @@ func TestSupervisorAssistantResultACPHelper(t *testing.T) {
 					kind = "agent_thought_chunk"
 				}
 				update := map[string]any{"sessionUpdate": kind, "content": map[string]any{"type": "text", "text": chunk.Text}}
-				if chunk.MessageID != "" {
+				if chunk.RawMessageID != nil {
+					update["messageId"] = json.RawMessage(chunk.RawMessageID)
+				} else if chunk.MessageID != "" {
 					update["messageId"] = chunk.MessageID
 				}
 				if chunk.Phase != "" {
@@ -746,4 +751,58 @@ func TestSupervisorAssistantResultACPHelper(t *testing.T) {
 	}
 	// A helper process must not append the Go test runner's PASS line to ACP.
 	os.Exit(0)
+}
+
+func TestSupervisorOpenCodeAssistantResultMalformedUnicodeHTTP(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		raw  []byte
+	}{
+		{"invalid UTF8 ff", []byte{'"', 0xff, '"'}},
+		{"invalid UTF8 fe", []byte{'"', 0xfe, '"'}},
+		{"unpaired high", []byte(`"\ud800"`)},
+		{"different unpaired high", []byte(`"\ud801"`)},
+		{"unpaired low", []byte(`"\udfff"`)},
+		{"high followed by ordinary scalar", []byte(`"\ud800\u0061"`)},
+		{"two high surrogates", []byte(`"\ud800\ud801"`)},
+		{"high followed by literal escape text", []byte(`"\ud800\\udfff"`)},
+	} {
+		for _, thought := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/thought=%t", test.name, thought), func(t *testing.T) {
+				fixture := newAssistantResultHTTPFixture(t, providerKindOpencode)
+				chunks := []assistantResultTestChunk{{MessageID: "earlier", Text: "Earlier message."}, {RawMessageID: test.raw, Text: "Malformed identity candidate.", Thought: thought}}
+				request, raw := fixture.startPrompt(t, "prompt-1", chunks)
+				fixture.assertRejectedStreamAndReplay(t, request, raw, chunks)
+			})
+		}
+	}
+}
+
+func TestSupervisorOpenCodeAssistantResultValidUnicodeRepresentationsHTTP(t *testing.T) {
+	for _, test := range []struct{ name, raw, decoded string }{
+		{"surrogate pair", `"\ud83d\ude00"`, "😀"},
+		{"uppercase surrogate pair", `"\uD83D\uDE00"`, "😀"},
+		{"escaped scalar", `"\u00e9"`, "é"},
+		{"replacement character", `"\ufffd"`, "�"},
+		{"literal escape text", `"\\ud800"`, `\ud800`},
+		{"anonymous empty", `""`, ""},
+		{"anonymous null", `null`, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newAssistantResultHTTPFixture(t, providerKindOpencode)
+			chunks := []assistantResultTestChunk{{RawMessageID: []byte(test.raw), Text: "First."}, {MessageID: test.decoded, Text: " Second."}}
+			_, events, _ := fixture.prompt(t, "prompt-1", chunks)
+			assertAssistantResultCompleted(t, assistantResultTerminal(t, events), "First. Second.")
+		})
+	}
+}
+
+func TestSupervisorOpenCodeAssistantResultMalformedIdentityCannotMergeWithReplacementHTTP(t *testing.T) {
+	fixture := newAssistantResultHTTPFixture(t, providerKindOpencode)
+	chunks := []assistantResultTestChunk{
+		{MessageID: "�", Text: "Valid replacement-character identity."},
+		{RawMessageID: []byte(`"\ud800"`), Text: "Malformed identity must not be coalesced into it."},
+	}
+	request, raw := fixture.startPrompt(t, "prompt-1", chunks)
+	fixture.assertRejectedStreamAndReplay(t, request, raw, chunks)
 }

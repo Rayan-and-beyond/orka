@@ -44,7 +44,7 @@ func TestAgentToolSchemasExposeRuntimeScopedOpenCodePromptLimits(t *testing.T) {
 				t.Fatal(err)
 			}
 			prompt := schema.Properties[systemPromptField]
-			for _, text := range []string{"OpenCode", strconv.Itoa(maxCharacters), strconv.Itoa(acp.MaxOpenCodeSystemPromptEncodedBytes), "JSON-encoded bytes"} {
+			for _, text := range []string{"OpenCode", strconv.Itoa(maxCharacters), strconv.Itoa(acp.MaxOpenCodeSystemPromptEncodedBytes), strconv.Itoa(maxCharacters / 6), "JSON-encoded bytes"} {
 				if !strings.Contains(prompt.Description, text) {
 					t.Errorf("schema does not advertise %q", text)
 				}
@@ -76,5 +76,18 @@ func TestAgentToolSchemasExposeRuntimeScopedOpenCodePromptLimits(t *testing.T) {
 	}
 	if err := acp.ValidateOpenCodeSystemPrompt(strings.Repeat("<", maxCharacters)); err == nil {
 		t.Fatal("character guidance must not replace exact escaped-byte validation")
+	}
+}
+
+func TestOpenCodeConservativePromptGuidanceRetainsLargerValidInputs(t *testing.T) {
+	conservativeCharacters := (acp.MaxOpenCodeSystemPromptEncodedBytes - 2) / 6
+	if err := acp.ValidateOpenCodeSystemPrompt(strings.Repeat("<", conservativeCharacters)); err != nil {
+		t.Fatal("conservative guidance must fit even with six-byte escapes")
+	}
+	if err := acp.ValidateOpenCodeSystemPrompt(strings.Repeat("<", conservativeCharacters+1)); err == nil {
+		t.Fatal("exact encoded-byte validation must still reject the next escaped character")
+	}
+	if err := acp.ValidateOpenCodeSystemPrompt(strings.Repeat("a", conservativeCharacters+1)); err != nil {
+		t.Fatal("conservative guidance must not become a new character restriction")
 	}
 }

@@ -22,8 +22,8 @@ func withOpenCodePromptLimits(parameters json.RawMessage) json.RawMessage {
 	// encoded-byte limit rather than treating maxLength as a sufficient check.
 	maxCharacters := acp.MaxOpenCodeSystemPromptEncodedBytes - 2
 	prompt[jsonSchemaDescriptionField] = fmt.Sprintf(
-		"%s OpenCode permits at most %d characters and %d JSON-encoded bytes, including quotes and escapes; the exact encoded-byte limit is validated at execution.",
-		prompt[jsonSchemaDescriptionField], maxCharacters, acp.MaxOpenCodeSystemPromptEncodedBytes,
+		"%s OpenCode permits at most %d characters and %d JSON-encoded bytes, including quotes and escapes; the exact encoded-byte limit is validated at execution. Keeping to %d characters fits that byte budget even with six-byte JSON escapes; longer prompts are allowed when their encoding fits.",
+		prompt[jsonSchemaDescriptionField], maxCharacters, acp.MaxOpenCodeSystemPromptEncodedBytes, maxCharacters/6,
 	)
 	if _, hasRuntime := properties["runtime"]; hasRuntime {
 		conditions, _ := schema["allOf"].([]any)
