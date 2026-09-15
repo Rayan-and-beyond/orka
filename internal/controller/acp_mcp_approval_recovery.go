@@ -154,12 +154,13 @@ func (d *ACPDispatcher) reconcileMCPApprovalExecutions(
 			delete(d.approvalRecovery, key)
 		}
 	}
+	sequences, err := d.mcpApprovalRecoveryEventSequences(ctx, candidates)
+	if err != nil {
+		return err
+	}
 	for key, candidate := range candidates {
 		task := candidate.task
-		seq, err := d.EventStore.GetLatestExecutionEventSeq(ctx, task.Namespace, events.ExecutionEventStreamTypeTask, task.Name)
-		if err != nil {
-			return err
-		}
+		seq := sequences[task.Namespace][task.Name]
 		previous, seen := d.approvalRecovery[key]
 		if !candidate.pending && seen && previous.fence == fence && previous.eventSeq == seq && maps.Equal(previous.versions, candidate.versions) {
 			continue
@@ -179,6 +180,25 @@ func (d *ACPDispatcher) reconcileMCPApprovalExecutions(
 		}
 	}
 	return nil
+}
+
+func (d *ACPDispatcher) mcpApprovalRecoveryEventSequences(ctx context.Context, candidates map[acpMCPApprovalTaskKey]*acpMCPApprovalRecoveryTask) (map[string]map[string]int64, error) {
+	streams := make(map[string][]string)
+	for _, candidate := range candidates {
+		if !candidate.pending {
+			task := candidate.task
+			streams[task.Namespace] = append(streams[task.Namespace], task.Name)
+		}
+	}
+	sequences := make(map[string]map[string]int64, len(streams))
+	for namespace, names := range streams {
+		latest, err := d.EventStore.GetLatestExecutionEventSeqs(ctx, namespace, events.ExecutionEventStreamTypeTask, names)
+		if err != nil {
+			return nil, err
+		}
+		sequences[namespace] = latest
+	}
+	return sequences, nil
 }
 
 func mcpApprovalRecoveryTasks(tasks []corev1alpha1.Task, effects map[string]acpMCPApprovalEffect, fence store.ControllerEpochFence) map[acpMCPApprovalTaskKey]*acpMCPApprovalRecoveryTask {

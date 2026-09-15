@@ -380,11 +380,14 @@ func TestMCPApprovalPostPollCancellationPersistsUnstartedReceipt(t *testing.T) {
 
 type approvalRecoveryEventStore struct {
 	store.DeduplicatingExecutionEventStore
-	lists       atomic.Int32
-	sequences   atomic.Int32
-	appends     atomic.Int32
-	failNext    atomic.Bool
-	afterAppend func()
+	lists                 atomic.Int32
+	sequences             atomic.Int32
+	sequenceBatches       atomic.Int32
+	sequenceStreams       atomic.Int64
+	appends               atomic.Int32
+	failNext              atomic.Bool
+	failNextSequenceBatch atomic.Bool
+	afterAppend           func()
 }
 
 func (s *approvalRecoveryEventStore) ListExecutionEvents(ctx context.Context, filter store.ExecutionEventFilter) ([]store.ExecutionEvent, error) {
@@ -395,6 +398,15 @@ func (s *approvalRecoveryEventStore) ListExecutionEvents(ctx context.Context, fi
 func (s *approvalRecoveryEventStore) GetLatestExecutionEventSeq(ctx context.Context, namespace, streamType, streamID string) (int64, error) {
 	s.sequences.Add(1)
 	return s.DeduplicatingExecutionEventStore.GetLatestExecutionEventSeq(ctx, namespace, streamType, streamID)
+}
+
+func (s *approvalRecoveryEventStore) GetLatestExecutionEventSeqs(ctx context.Context, namespace, streamType string, streamIDs []string) (map[string]int64, error) {
+	s.sequenceBatches.Add(1)
+	s.sequenceStreams.Add(int64(len(streamIDs)))
+	if s.failNextSequenceBatch.Swap(false) {
+		return nil, errors.New("injected approval sequence outage")
+	}
+	return s.DeduplicatingExecutionEventStore.GetLatestExecutionEventSeqs(ctx, namespace, streamType, streamIDs)
 }
 
 func (s *approvalRecoveryEventStore) AppendExecutionEventIfAbsent(ctx context.Context, event *store.ExecutionEvent, key string) (*store.ExecutionEvent, bool, error) {
@@ -430,7 +442,9 @@ func TestMCPApprovalRecoveryOnlyReadsOwningTaskAndSkipsUnchangedHistory(t *testi
 	observed := &approvalRecoveryEventStore{DeduplicatingExecutionEventStore: f.events}
 	f.dispatcher.EventStore = observed
 	require.NoError(t, f.reconcile(t))
-	require.EqualValues(t, 1, observed.sequences.Load(), "only the owning Task needs an indexed sequence read")
+	require.Zero(t, observed.sequences.Load(), "recovery must not read sequences one Task at a time")
+	require.EqualValues(t, 1, observed.sequenceBatches.Load())
+	require.EqualValues(t, 1, observed.sequenceStreams.Load(), "only the owning Task belongs in the sequence batch")
 	require.EqualValues(t, 2, observed.lists.Load(), "read the owning history once and recheck it under the epoch guard")
 	require.EqualValues(t, 1, observed.appends.Load())
 	// The first follow-up observes recovery's own append. Later scans must
@@ -443,15 +457,94 @@ func TestMCPApprovalRecoveryOnlyReadsOwningTaskAndSkipsUnchangedHistory(t *testi
 	require.Equal(t, lists, observed.lists.Load())
 	require.Equal(t, exactReads, f.exactReads.Load())
 	require.Len(t, f.dispatcher.approvalRecovery, 1)
+	require.Zero(t, observed.sequences.Load())
 	persisted, err := f.control.GetExternalEffectByIdentity(f.ctx, effect.Identity)
 	require.NoError(t, err)
 	require.Equal(t, effect, persisted, "recovery must not change the original execution identity or receipt")
 
 	require.NoError(t, f.kube.Delete(f.ctx, f.task))
-	sequences := observed.sequences.Load()
+	batches := observed.sequenceBatches.Load()
 	require.NoError(t, f.reconcile(t))
-	require.Equal(t, sequences, observed.sequences.Load(), "historical effects for deleted Tasks need no event query")
+	require.Equal(t, batches, observed.sequenceBatches.Load(), "historical effects for deleted Tasks need no event query")
 	require.Empty(t, f.dispatcher.approvalRecovery)
+}
+
+func TestMCPApprovalRecoveryBatchesHistoricalTaskSequences(t *testing.T) {
+	f := newMCPApprovalRecoveryFixture(t)
+	_, effect := f.seed(t, store.ExternalEffectSucceeded, "running", true, json.RawMessage(`{"workOrder":"simulated-1"}`))
+	tasks := make([]corev1alpha1.Task, 1, 65)
+	tasks[0] = *f.task
+	effects := map[string]acpMCPApprovalEffect{
+		effect.ID: {ExternalEffect: *effect, taskUID: f.task.UID},
+	}
+	for i := range 64 {
+		other := f.task.DeepCopy()
+		other.Name, other.UID, other.ResourceVersion = fmt.Sprintf("retained-task-%d", i), types.UID(fmt.Sprintf("retained-uid-%d", i)), ""
+		if i%2 == 0 {
+			other.Namespace = "another-namespace"
+		}
+		tasks = append(tasks, *other)
+		retained := *effect
+		retained.Identity.Namespace = other.Namespace
+		retained.Identity.AggregateID = fmt.Sprintf("retained-session-%d", i)
+		retained.Identity.OperationID = fmt.Sprintf("retained-operation-%d", i)
+		var err error
+		retained.ID, err = retained.Identity.CanonicalID()
+		require.NoError(t, err)
+		// A crash before ApprovalRequested can leave a retained denial without
+		// a review event. These owners must not cause individual sequence reads.
+		retained.State = store.ExternalEffectFailed
+		retained.Response = acpMCPAbandonedPendingReceipt(&retained)
+		retained.ResponseDigest = store.CanonicalBytesDigest(retained.Response)
+		effects[retained.ID] = acpMCPApprovalEffect{ExternalEffect: retained, taskUID: other.UID}
+	}
+	observed := &approvalRecoveryEventStore{DeduplicatingExecutionEventStore: f.events}
+	f.dispatcher.EventStore = observed
+	reconcile := func() {
+		t.Helper()
+		require.NoError(t, f.dispatcher.reconcileMCPApprovalExecutions(f.ctx, f.fence, tasks, effects))
+	}
+	reconcile()
+	require.EqualValues(t, 2, observed.sequenceBatches.Load(), "one batch per namespace, independent of Task count")
+	require.EqualValues(t, len(tasks), observed.sequenceStreams.Load())
+	// Observe the first projection's append, then verify unchanged histories
+	// stay cached while every scan checks late events in namespace batches.
+	reconcile()
+	lists := observed.lists.Load()
+	for range 3 {
+		reconcile()
+	}
+	require.Equal(t, lists, observed.lists.Load())
+	require.EqualValues(t, 10, observed.sequenceBatches.Load())
+	require.EqualValues(t, 5*len(tasks), observed.sequenceStreams.Load())
+	require.Zero(t, observed.sequences.Load())
+	require.Len(t, f.dispatcher.approvalRecovery, len(tasks))
+	approval, _ := f.approval(t)
+	require.Equal(t, "succeeded", approval.ExecutionOutcome)
+	require.EqualValues(t, 1, f.count.Load())
+}
+
+func TestMCPApprovalRecoveryRetriesFailedSequenceBatch(t *testing.T) {
+	f := newMCPApprovalRecoveryFixture(t)
+	call, _ := f.seed(t, store.ExternalEffectSucceeded, "", true, json.RawMessage(`{"workOrder":"simulated-1"}`))
+	observed := &approvalRecoveryEventStore{DeduplicatingExecutionEventStore: f.events}
+	f.dispatcher.EventStore = observed
+	require.NoError(t, f.reconcile(t))
+	require.NoError(t, f.reconcile(t))
+	lists, appends := observed.lists.Load(), observed.appends.Load()
+	require.NoError(t, f.broker.approvalOutcome(f.ctx, call, "running", "Late start event", nil))
+	observed.failNextSequenceBatch.Store(true)
+	require.EqualError(t, f.reconcile(t), "injected approval sequence outage")
+	require.Equal(t, lists, observed.lists.Load(), "failed sequence reads must not project histories")
+	require.Equal(t, appends, observed.appends.Load())
+	stale, _ := f.approval(t)
+	require.Equal(t, "running", stale.ExecutionOutcome)
+	require.NoError(t, f.reconcile(t))
+	repaired, _ := f.approval(t)
+	require.Equal(t, "succeeded", repaired.ExecutionOutcome)
+	require.Equal(t, appends+1, observed.appends.Load())
+	require.Zero(t, observed.sequences.Load())
+	require.EqualValues(t, 1, f.count.Load())
 }
 
 func TestMCPApprovalRecoveryCacheDoesNotHideEventRacingWithProjection(t *testing.T) {
@@ -529,11 +622,11 @@ func TestMCPApprovalRecoveryPreservesCurrentLeaseAndPendingCalls(t *testing.T) {
 			require.Equal(t, effect.Version, persisted.Version)
 			if state == store.ExternalEffectPending {
 				require.EqualValues(t, 1, observed.lists.Load(), "pending reviews need targeted expiry and prompt-liveness checks")
-				require.EqualValues(t, 1, observed.sequences.Load())
 			} else {
 				require.Zero(t, observed.lists.Load())
-				require.Zero(t, observed.sequences.Load(), "current live execution leases need no approval recovery queries")
 			}
+			require.Zero(t, observed.sequences.Load())
+			require.Zero(t, observed.sequenceBatches.Load(), "uncached Pending reviews and current live leases need no sequence query")
 			require.Zero(t, f.count.Load())
 		})
 	}
@@ -588,9 +681,10 @@ func TestMCPApprovalRecoverySkipsMismatchedEffectsAndEmptyNamespaces(t *testing.
 			}
 			require.NoError(t, f.dispatcher.reconcileMCPApprovalExecutions(f.ctx, f.fence, []corev1alpha1.Task{*f.task}, effects))
 			require.Zero(t, observed.appends.Load())
+			require.Zero(t, observed.sequences.Load())
 			if mismatch != "other_request" && mismatch != "other_operation" {
 				require.Zero(t, observed.lists.Load(), "no candidate effects means no per-Task event reads")
-				require.Zero(t, observed.sequences.Load())
+				require.Zero(t, observed.sequenceBatches.Load())
 			}
 		})
 	}
