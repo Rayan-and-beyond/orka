@@ -1,0 +1,243 @@
+# One namespace-scoped Orka installation for one team. Rendered per team by
+# demo/setup/two-teams.sh (TEAM, PROVIDER, MODEL, CONTROLLER_IMAGE,
+# WORKER_IMAGE are substituted). Mirrors the layout PR #604's own test uses:
+# the team's controller sees only its namespace and its runtime namespace,
+# keeps its own database, snapshot key, Provider, and Agents.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: TEAM
+  labels:
+    orka.ai/controller-mode: harness-v2
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: TEAM-runtimes
+  labels:
+    orka.ai/controller-mode: harness-v2
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: controller
+  namespace: TEAM
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: controller
+  namespace: TEAM
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: controller
+  namespace: TEAM
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: controller
+subjects:
+  - kind: ServiceAccount
+    name: controller
+    namespace: TEAM
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: controller
+  namespace: TEAM-runtimes
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: controller
+  namespace: TEAM-runtimes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: controller
+subjects:
+  - kind: ServiceAccount
+    name: controller
+    namespace: TEAM
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: compat-TEAM
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+  - apiGroups: [authorization.k8s.io]
+    resources: [subjectaccessreviews]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [namespaces]
+    resourceNames: [TEAM, TEAM-runtimes]
+    verbs: [get]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [workspace.orka.ai]
+    resources: [executionworkspaceproviders, executionworkspaceclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [acp.workspace.orka.ai]
+    resources: [runtimeproviderconfigs]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: compat-TEAM
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: compat-TEAM
+subjects:
+  - kind: ServiceAccount
+    name: controller
+    namespace: TEAM
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orka-controller
+  namespace: TEAM
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orka-controller
+  template:
+    metadata:
+      labels:
+        app: orka-controller
+    spec:
+      serviceAccountName: controller
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: manager
+          image: CONTROLLER_IMAGE
+          command: [/manager]
+          args:
+            - --leader-elect
+            - --controller-mode=harness-v2
+            - --watch-namespace=TEAM
+            - --enforce-namespace-isolation=true
+            - --execution-mode-controller-usernames=system:serviceaccount:TEAM:controller
+            - --store-backend=sqlite
+            - --store-path=/data/orka.db
+            - --agent-execution-snapshot-key-file=/snapshot/key
+            - --controller-url=http://orka-api.TEAM.svc:8080
+            - --acp-runtime-namespace=TEAM-runtimes
+            - --gateway-enabled=false
+            - --general-worker-image=WORKER_IMAGE
+            - --ai-worker-cluster-role-name=compat-worker
+            - --vendor-worker-cluster-role-name=compat-worker
+            - --container-worker-cluster-role-name=compat-worker
+            - --chat-max-duration=5m
+            - --chat-max-iterations=12
+          env:
+            - name: POD_NAMESPACE
+              value: TEAM
+            - name: ORKA_ACP_ARTIFACT_ROOT
+              value: /data/acp-artifacts
+          ports:
+            - name: api
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: snapshot
+              mountPath: /snapshot
+              readOnly: true
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: snapshot
+          secret:
+            secretName: snapshot-key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orka-api
+  namespace: TEAM
+spec:
+  selector:
+    app: orka-controller
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+# The team's model access. Both teams happen to share one upstream proxy in
+# this cluster; what differs is the Provider each team is given and the
+# default model behind it.
+apiVersion: core.orka.ai/v1alpha1
+kind: Provider
+metadata:
+  name: PROVIDER
+  namespace: TEAM
+spec:
+  type: openai
+  baseURL: http://vekil.vekil-system.svc.cluster.local:1337/v1
+  secretRef:
+    name: provider-key
+    key: api-key
+  defaultModel: MODEL
+---
+# The team's developer identity. Chat, model discovery, and Tasks in this
+# namespace; nothing anywhere else.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: DEVELOPER
+  namespace: TEAM
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: developer
+  namespace: TEAM
+rules:
+  - apiGroups: [core.orka.ai]
+    resources: [chats, chats/config]
+    verbs: [create, get]
+  - apiGroups: [core.orka.ai]
+    resources: [providers, agents, tools, skills]
+    verbs: [get, list]
+  - apiGroups: [core.orka.ai]
+    resources: [tasks, sessions]
+    verbs: [get, list, create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developer
+  namespace: TEAM
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: developer
+subjects:
+  - kind: ServiceAccount
+    name: DEVELOPER
+    namespace: TEAM
