@@ -1,0 +1,16 @@
+# The one model Provider the platform team registers. Its credential is a
+# Kubernetes Secret; developers never see it. Here it points at a vekil proxy
+# (GitHub Copilot-backed) that serves both Claude and GPT models, so one
+# Provider covers the chat coordinator and every coding-agent runtime.
+apiVersion: core.orka.ai/v1alpha1
+kind: Provider
+metadata:
+  name: copilot
+  namespace: orka-system
+spec:
+  type: openai
+  baseURL: http://vekil.vekil-system.svc.cluster.local:1337/v1
+  secretRef:
+    name: copilot-key
+    key: api-key
+  defaultModel: claude-opus-5

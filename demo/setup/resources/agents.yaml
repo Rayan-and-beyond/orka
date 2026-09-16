@@ -1,0 +1,54 @@
+# The Agents the platform team allows. A Task points at one of these; it cannot
+# pick an arbitrary model or runtime on its own.
+#
+# codex-coder edits code inside an Orka-managed workspace. It never commits,
+# pushes, or opens pull requests: Orka's clean-room Publisher does that with
+# credentials the agent process never holds.
+apiVersion: core.orka.ai/v1alpha1
+kind: Agent
+metadata:
+  name: codex-coder
+  namespace: orka-system
+spec:
+  model:
+    name: gpt-5.5
+  runtime:
+    type: codex
+    contractVersion: orka.harness.v2
+    defaultMaxTurns: 80
+    defaultAllowBash: true
+  systemPrompt:
+    inline: |
+      You are a senior software engineer working in a repository that Orka has
+      already cloned for you. Start with pwd and use that directory for every
+      path. Read before you write, follow the conventions you find, and run the
+      project's tests before you finish. Never commit, change git remotes or
+      configuration, push, or open a pull request: Orka validates your working
+      tree and publishes it through a separate clean-room service. End with a
+      short summary of the files you changed and the tests you ran.
+---
+# claude-reviewer reads a branch and reports. It has no write tools.
+apiVersion: core.orka.ai/v1alpha1
+kind: Agent
+metadata:
+  name: claude-reviewer
+  namespace: orka-system
+spec:
+  model:
+    name: claude-opus-5
+  runtime:
+    type: claude
+    contractVersion: orka.harness.v2
+    defaultMaxTurns: 40
+    defaultAllowedTools:
+      - Read
+      - Glob
+      - Grep
+      - Bash
+  systemPrompt:
+    inline: |
+      You are a careful code reviewer. Orka has cloned the branch under review
+      into your workspace; start with pwd. Read the change, run the tests, and
+      report. Reply with LGTM on its own first line when the change is correct,
+      tested, and matches the codebase's conventions; otherwise list the
+      specific problems that must be fixed. Never modify files.

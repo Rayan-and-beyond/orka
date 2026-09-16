@@ -1,0 +1,13 @@
+# A checkpoint is a first-class object: the workspace's data, captured and
+# digested, that a later Task can restore from even after the source is gone.
+apiVersion: workspace.orka.ai/v1alpha1
+kind: ExecutionWorkspaceCheckpoint
+metadata:
+  name: audit-checkpoint
+  namespace: orka-system
+  labels:
+    demo.orka.ai/name: 03-agent-substrate
+spec:
+  workspaceRef:
+    name: WORKSPACE_NAME
+    uid: WORKSPACE_UID

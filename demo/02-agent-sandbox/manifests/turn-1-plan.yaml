@@ -1,0 +1,34 @@
+# Turn 1: read the repository and write a plan into the workspace.
+# The Task points at a class, not a provider: sandbox-session says "one
+# kubernetes-sigs Agent Sandbox per Session, keep its data between turns".
+apiVersion: core.orka.ai/v1alpha1
+kind: Task
+metadata:
+  name: inventory-plan
+  namespace: orka-system
+  labels:
+    demo.orka.ai/name: 02-agent-sandbox
+spec:
+  type: agent
+  agentRef:
+    name: codex-coder
+  sessionRef:
+    name: inventory-sandbox
+    create: true
+  execution:
+    workspace:
+      classRef:
+        name: sandbox-session
+      reusePolicy: session
+  workspace:
+    intent: read
+    gitRepo: https://github.com/sozercan/orka-demo-inventory
+    branch: main
+    readCredentialRef:
+      name: github-credentials
+  timeout: 20m
+  prompt: |
+    Read this repository. Then write PLAN.md in the repository root describing,
+    in at most ten lines, how you would add a GET /healthz endpoint that
+    returns {"status":"ok"} with a unit test and a README entry. Do not
+    implement anything yet. Reply with the exact contents of PLAN.md.

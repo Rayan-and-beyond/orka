@@ -1,0 +1,26 @@
+# Turn 3: a new Session, restored from the checkpoint. The original workspace
+# and its Actor were deleted; the bytes come back.
+apiVersion: core.orka.ai/v1alpha1
+kind: Task
+metadata:
+  name: audit-restore
+  namespace: orka-system
+  labels:
+    demo.orka.ai/name: 03-agent-substrate
+spec:
+  type: agent
+  agentRef:
+    name: codex-coder
+  execution:
+    workspace:
+      classRef:
+        name: substrate-session
+      onDetach: Delete
+      restoreFrom:
+        name: audit-checkpoint
+        uid: CHECKPOINT_UID
+        digest: CHECKPOINT_DIGEST
+  timeout: 20m
+  prompt: |
+    Print AUDIT.md from the repository root exactly as it is on disk. Reply
+    with its contents and nothing else.

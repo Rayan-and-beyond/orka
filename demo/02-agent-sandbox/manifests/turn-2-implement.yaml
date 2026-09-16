@@ -1,0 +1,43 @@
+# Turn 2: the same Session, so the same suspended Sandbox wakes up with the
+# plan still on disk. Write intent means Orka's Publisher will verify and
+# publish the result and open the pull request.
+apiVersion: core.orka.ai/v1alpha1
+kind: Task
+metadata:
+  name: inventory-implement
+  namespace: orka-system
+  labels:
+    demo.orka.ai/name: 02-agent-sandbox
+spec:
+  type: agent
+  agentRef:
+    name: codex-coder
+  sessionRef:
+    name: inventory-sandbox
+  execution:
+    workspace:
+      classRef:
+        name: sandbox-session
+      reusePolicy: session
+  workspace:
+    intent: write
+    gitRepo: https://github.com/sozercan/orka-demo-inventory
+    branch: main
+    readCredentialRef:
+      name: github-credentials
+    publicationGitRepo: https://github.com/sozercan/orka-demo-inventory
+    publicationReadCredentialRef:
+      name: github-credentials
+    publicationCredentialRef:
+      name: github-credentials
+    forgeCredentialRef:
+      name: github-credentials
+    pushBranch: orka/healthz-from-sandbox
+    prBaseBranch: main
+    createPR: true
+  timeout: 30m
+  prompt: |
+    PLAN.md in the repository root is the plan you wrote in the previous turn.
+    Print it first, then implement it exactly: the endpoint, the unit test,
+    and the README entry. Delete PLAN.md when you are done and run go test ./...
+    Reply with the test output and the list of files you changed.

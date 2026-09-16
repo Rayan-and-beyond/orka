@@ -1,0 +1,129 @@
+# Execution-workspace classes: where an agent's process and filesystem live.
+#
+# A class binds a provider (agent-sandbox or Agent Substrate) to a lifecycle
+# policy. Tasks reference the class by name; the provider-specific details stay
+# with the platform team.
+apiVersion: acp.workspace.orka.ai/v1alpha1
+kind: RuntimeProviderConfig
+metadata:
+  name: agent-sandbox
+  namespace: orka-system
+spec:
+  backend: agent-sandbox
+---
+apiVersion: workspace.orka.ai/v1alpha1
+kind: ExecutionWorkspaceProvider
+metadata:
+  name: agent-sandbox
+  namespace: orka-system
+spec:
+  controllerName: acp.workspace.orka.ai/runtime-pool
+  parametersRef:
+    group: acp.workspace.orka.ai
+    kind: RuntimeProviderConfig
+    name: agent-sandbox
+  lifecycleState: Active
+  requiredContracts:
+    - workspace.orka.ai/v1
+---
+# sandbox-session: one kubernetes-sigs Agent Sandbox per Session. When the
+# agent detaches, the Sandbox is suspended and its data volume kept, so the
+# next turn cold-starts against the same filesystem.
+apiVersion: acp.workspace.orka.ai/v1alpha1
+kind: RuntimeWorkspaceProfile
+metadata:
+  name: sandbox-session
+  namespace: orka-system
+spec:
+  agentSandbox:
+    suspend:
+      mode: DataOnly
+      volume:
+        capacity: 1Gi
+---
+apiVersion: workspace.orka.ai/v1alpha1
+kind: ExecutionWorkspaceClass
+metadata:
+  name: sandbox-session
+  namespace: orka-system
+spec:
+  providerRef:
+    name: agent-sandbox
+  parametersRef:
+    group: acp.workspace.orka.ai
+    kind: RuntimeWorkspaceProfile
+    name: sandbox-session
+  mode: Interactive
+  allowedReuseScopes: [Session]
+  lifecycle:
+    defaultOnDetach: Suspend
+    allowedOnDetach: [Suspend, Delete]
+    detachTimeout: 5m
+    maxLifetime: 4h
+    deletionPolicy:
+      providerResources: Delete
+      persistentVolumes: Delete
+      checkpoints: Delete
+---
+apiVersion: acp.workspace.orka.ai/v1alpha1
+kind: RuntimeProviderConfig
+metadata:
+  name: substrate
+  namespace: orka-system
+spec:
+  backend: substrate
+---
+apiVersion: workspace.orka.ai/v1alpha1
+kind: ExecutionWorkspaceProvider
+metadata:
+  name: substrate
+  namespace: orka-system
+spec:
+  controllerName: acp.workspace.orka.ai/runtime-pool
+  parametersRef:
+    group: acp.workspace.orka.ai
+    kind: RuntimeProviderConfig
+    name: substrate
+  lifecycleState: Active
+  requiredContracts:
+    - workspace.orka.ai/v1
+---
+# substrate-session: one gVisor Actor per Session on Agent Substrate. On
+# detach only the data is kept (no process memory), and the next turn boots a
+# fresh Actor from it. Checkpoints can be exported and restored later.
+apiVersion: acp.workspace.orka.ai/v1alpha1
+kind: RuntimeWorkspaceProfile
+metadata:
+  name: substrate-session
+  namespace: orka-system
+spec:
+  substrate:
+    templateRef:
+      namespace: orka-system
+      name: orka-acp-infra
+    suspend:
+      mode: DataOnly
+---
+apiVersion: workspace.orka.ai/v1alpha1
+kind: ExecutionWorkspaceClass
+metadata:
+  name: substrate-session
+  namespace: orka-system
+spec:
+  providerRef:
+    name: substrate
+  parametersRef:
+    group: acp.workspace.orka.ai
+    kind: RuntimeWorkspaceProfile
+    name: substrate-session
+  mode: Interactive
+  allowedReuseScopes: [None, Session]
+  lifecycle:
+    defaultOnDetach: Suspend
+    allowedOnDetach: [Suspend, Delete]
+    detachTimeout: 5m
+    maxLifetime: 4h
+    deletionPolicy:
+      providerResources: Delete
+      persistentVolumes: Delete
+      checkpoints: Delete

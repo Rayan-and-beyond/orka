@@ -1,0 +1,31 @@
+# Register a repository for security scanning. Orka clones it, writes a threat
+# model, reviews the code in slices, validates the likely findings, and keeps
+# everything as records you can query. Remediation is a separate, explicit
+# step: nothing is patched until a person asks.
+apiVersion: core.orka.ai/v1alpha1
+kind: RepositoryScan
+metadata:
+  name: nodejs-goof
+  namespace: orka-system
+  labels:
+    demo.orka.ai/name: 04-security-scan
+spec:
+  provider: github
+  repoURL: https://github.com/sozercan/nodejs-goof
+  branch: main
+  validationMode: light
+  maxFindingsPerRun: 10
+  analysisAgentRef:
+    name: claude-reviewer
+  patchAgentRef:
+    name: codex-coder
+  gitSecretRef:
+    name: github-credentials
+  readCredentialRef:
+    name: github-credentials
+  publicationReadCredentialRef:
+    name: github-credentials
+  publicationCredentialRef:
+    name: github-credentials
+  forgeCredentialRef:
+    name: github-credentials

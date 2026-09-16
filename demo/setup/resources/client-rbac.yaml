@@ -1,0 +1,35 @@
+# The identity a developer or CI job uses. It is an ordinary ServiceAccount;
+# `kubectl create token orka-client` mints the bearer token the CLI, the
+# dashboard, and Claude Code present to Orka. No model key is involved.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orka-client
+  namespace: orka-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: orka-client
+  namespace: orka-system
+rules:
+  - apiGroups: [core.orka.ai]
+    resources: [tasks, repositorymonitors, repositoryscans]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [core.orka.ai]
+    resources: [agents, tools, skills, providers, runtimepools]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: orka-client
+  namespace: orka-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: orka-client
+subjects:
+  - kind: ServiceAccount
+    name: orka-client
+    namespace: orka-system
