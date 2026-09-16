@@ -6,6 +6,11 @@ import "context"
 // model instruction text. It follows the existing canonical transcript lifecycle.
 const SessionSoulDigestMetadata = "orka.ai/soul-configuration-digest"
 
+// SessionSoulUnboundMetadata marks a controller-authored Gateway AI error that
+// failed before soul binding or execution. Only the literal "true" on a canonical
+// error without digest metadata is unbound; absence preserves legacy identity.
+const SessionSoulUnboundMetadata = "orka.ai/soul-unbound"
+
 // SessionSoulAnchorSource identifies digest-only context retained for the Session lifetime.
 const SessionSoulAnchorSource = "soul-context"
 
@@ -13,9 +18,12 @@ const SessionSoulAnchorSource = "soul-context"
 // message revision (first assistant message for gateway-owned conversations).
 // Established with an empty Digest means an explicitly no-soul conversation.
 type SessionSoulState struct {
-	Established    bool
-	Digest         string
-	MessageCount   int
+	Established bool
+	Digest      string
+	// MessageCount includes all visible messages, including unbound failures.
+	MessageCount int
+	// FirstMessageID excludes hidden anchors and attested unbound Gateway turns
+	// so the controller can still require the current event to be first.
 	FirstMessageID string
 	SessionType    string
 }

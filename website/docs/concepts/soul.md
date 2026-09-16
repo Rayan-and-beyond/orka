@@ -97,7 +97,7 @@ For ACP Tasks, the effective prompt is part of the existing immutable execution
 snapshot and runtime-profile digest. Already-bound Tasks retain those inputs.
 An incompatible Session configuration is a terminal error, not a capacity retry.
 
-AI Tasks record only Agent identity and content digests in `status.soulBinding`;
+Soul-enabled AI Tasks record only Agent identity and content digests in `status.soulBinding`;
 no persona text enters that status. Each new Job attempt must resolve the same
 Agent revision and composed prompt. Missing or changed inputs reject the retry
 rather than silently switching persona. An AI Task that started without a soul
@@ -119,17 +119,25 @@ Transient API, Session-store, and pin-write failures retry reconciliation withou
 consuming an execution attempt; invalid configuration and revision drift still
 fail closed. A new AI soul Session must append its initial turn; an established
 Session can subsequently be used without appending. Legacy conversations without
-a soul cannot acquire one in-place. Removing or changing a soul/role revision
-requires a new Session.
-Gateway-owned conversations retain the same rule through their canonical terminal
-projection, independently of queued future user messages. Event retention preserves
-a digest-only identity anchor while removing expired content; the anchor is hidden
-from transcript reads and deleted with the Session.
+a soul cannot acquire one in-place. For soul-enabled Sessions, removing or changing
+the soul or effective role/Agent revision requires a new Session.
 
-Keep the original Agent object and spec unchanged for existing Sessions. Agent UID
-and generation participate in configuration identity: reverting text or recreating
-an Agent does not restore its earlier identity. Publish a new Agent and source
-revision for new Sessions instead.
+An explicit no-soul pin records **absence only**. Sessions without `spec.soul`
+retain their legacy Agent/role-change behavior; the absence pin prevents later
+soul opt-in without introducing full revision pinning for those Sessions.
+Gateway-owned conversations retain the same rule through their canonical terminal
+projection, independently of queued future user messages. Explicitly attested
+pre-binding, pre-execution soul-configuration errors remain visible in history but
+do not establish an intentional no-soul revision; correcting the source can still
+establish the first revision. Ambiguous legacy failures are not reinterpreted.
+Event retention preserves an established digest-only identity anchor while removing
+expired content; the anchor is hidden from transcript reads and deleted with the
+Session.
+
+Keep the original Agent object and spec unchanged for existing **soul-enabled**
+Sessions. Agent UID and generation participate in their configuration identity:
+reverting text or recreating an Agent does not restore its earlier identity.
+Publish a new Agent and source revision for new soul-enabled Sessions instead.
 
 Deploy matching controller and runtime images before enabling this feature; do not
 expect an older controller to interpret new Agent fields.

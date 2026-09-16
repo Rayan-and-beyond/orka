@@ -263,7 +263,11 @@ func (v *TaskExecutionAuthorityValidator) Handle(ctx context.Context, req ctrlad
 	if oldObject.Status.SoulBinding != nil && !reflect.DeepEqual(oldObject.Status.SoulBinding, object.Status.SoulBinding) {
 		return ctrladmission.Denied("AI soul binding is write-once and immutable")
 	}
-	if binding := object.Status.SoulBinding; binding != nil && (object.Spec.Type != corev1alpha1.TaskTypeAI || binding.TaskGeneration != object.Generation || !object.DeletionTimestamp.IsZero() && oldObject.Status.SoulBinding == nil) {
+	// Match the live generation when first binding, not when preserving a
+	// binding: deletion can advance metadata.generation without changing spec.
+	// The immutable spec/binding and finalizer ownership checks above still apply.
+	if binding := object.Status.SoulBinding; binding != nil && (object.Spec.Type != corev1alpha1.TaskTypeAI ||
+		oldObject.Status.SoulBinding == nil && (binding.TaskGeneration != object.Generation || !object.DeletionTimestamp.IsZero())) {
 		return ctrladmission.Denied("AI soul binding does not match the Task identity")
 	}
 	oldBinding, newBinding := oldObject.Status.AgentExecutionBinding, object.Status.AgentExecutionBinding
