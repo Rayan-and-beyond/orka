@@ -505,7 +505,7 @@ func (r *AgentReconciler) validateDefaultInstructions(ctx context.Context, agent
 }
 
 // agentSoulConfigMapDependencyIndex is a cache-only dependency index. Besides
-// soul sources, index every role source read by default-instruction validation.
+// soul sources, index every role source read by Agent readiness validation.
 func agentSoulConfigMapDependencyIndex(object client.Object) []string {
 	agent, ok := object.(*corev1alpha1.Agent)
 	if !ok || agent == nil {
@@ -517,7 +517,7 @@ func agentSoulConfigMapDependencyIndex(object client.Object) []string {
 			names = append(names, ref.Name)
 		}
 	}
-	if agentValidatesDefaultInstructions(agent) && agent.Spec.SystemPrompt != nil {
+	if agent.Spec.SystemPrompt != nil {
 		if ref := agent.Spec.SystemPrompt.ConfigMapRef; ref != nil && ref.Name != "" && !slices.Contains(names, ref.Name) {
 			names = append(names, ref.Name)
 		}
@@ -536,7 +536,7 @@ func (r *AgentReconciler) agentsForSoulConfigMap(ctx context.Context, object cli
 	if err := r.List(ctx, &agents, client.InNamespace(configMap.Namespace), client.MatchingFields{
 		agentSoulConfigMapDependenciesField: configMap.Name,
 	}); err != nil {
-		log.FromContext(ctx).Error(err, "Failed to list Agents referencing soul ConfigMap",
+		log.FromContext(ctx).Error(err, "Failed to list Agents referencing ConfigMap",
 			"namespace", configMap.Namespace, "configMap", configMap.Name)
 		return nil
 	}

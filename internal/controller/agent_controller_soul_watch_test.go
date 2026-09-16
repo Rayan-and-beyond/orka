@@ -230,13 +230,13 @@ func TestAgentSoulConfigMapWatchCopilotRoleDependencies(t *testing.T) {
 		{name: "OpenCode", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Runtime.Type = corev1alpha1.AgentRuntimeOpencode }, want: true},
 		{name: "legacy Copilot", mutate: func(agent *corev1alpha1.Agent) {
 			agent.Spec.Runtime.ContractVersion = new(corev1alpha1.AgentRuntimeContractHarnessV1)
-		}},
-		{name: "unclassified Copilot", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Runtime.ContractVersion = nil }},
+		}, want: true},
+		{name: "unclassified Copilot", mutate: func(agent *corev1alpha1.Agent) { agent.Spec.Runtime.ContractVersion = nil }, want: true},
 		{name: "runtimeRef", mutate: func(agent *corev1alpha1.Agent) {
 			agent.Spec.Runtime.Type = ""
 			agent.Spec.Runtime.RuntimeRef = &corev1alpha1.AgentRuntimeReference{Name: "external"}
 			agent.Spec.Runtime.ContractVersion = nil
-		}},
+		}, want: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			agent := copilotSoulInstructionsAgent("role-dependent")
@@ -290,4 +290,41 @@ func TestAgentSoulConfigMapWatchCopilotRoleReferenceChanges(t *testing.T) {
 	agent.Spec.SystemPrompt = nil
 	require.NoError(t, r.Update(ctx, agent))
 	require.Empty(t, r.agentsForSoulConfigMap(ctx, replacement))
+}
+
+func TestAgentRoleConfigMapWatchIncludesLegacyAndExternal(t *testing.T) {
+	for _, external := range []bool{false, true} {
+		name := "legacy"
+		if external {
+			name = "external"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			agent := baseAgent("role-only")
+			agent.Spec.Runtime = &corev1alpha1.AgentCLIRuntime{
+				Type: corev1alpha1.AgentRuntimeClaude, ContractVersion: new(corev1alpha1.AgentRuntimeContractHarnessV1),
+			}
+			if external {
+				agent.Spec.Runtime.Type = ""
+				agent.Spec.Runtime.RuntimeRef = &corev1alpha1.AgentRuntimeReference{Name: "external"}
+				agent.Spec.Runtime.ContractVersion = nil
+			}
+			agent.Spec.SystemPrompt = &corev1alpha1.PromptSource{ConfigMapRef: &corev1alpha1.ConfigMapKeySelector{Name: "role-map", Key: "prompt"}}
+			r := newAgentSoulWatchReconciler(t, agent)
+			cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "role-map", Namespace: agent.Namespace}}
+			want := []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(agent)}}
+			require.Equal(t, want, r.agentsForSoulConfigMap(ctx, cm))
+			require.False(t, agentValidatesDefaultInstructions(agent), "dependency tracking must not enable native delivery validation")
+			require.Error(t, r.validateSystemPromptConfigMap(ctx, agent))
+			cm.Data = map[string]string{"prompt": "role"}
+			require.NoError(t, r.Create(ctx, cm))
+			require.NoError(t, r.validateSystemPromptConfigMap(ctx, agent))
+			cm.Data = map[string]string{}
+			require.NoError(t, r.Update(ctx, cm))
+			require.Error(t, r.validateSystemPromptConfigMap(ctx, agent))
+			require.NoError(t, r.Delete(ctx, cm))
+			require.Equal(t, want, r.agentsForSoulConfigMap(ctx, cm))
+			require.Error(t, r.validateSystemPromptConfigMap(ctx, agent))
+		})
+	}
 }
