@@ -15,7 +15,7 @@ peq "orka session delete inventory-sandbox"
 peq "kubectl -n $ORKA_NAMESPACE delete tasks -l demo.orka.ai/name=02-agent-sandbox --wait=true"
 peq "kubectl -n $ORKA_NAMESPACE delete executionworkspaces -l demo.orka.ai/name=02-agent-sandbox --wait=true"
 peq "gh pr list --repo sozercan/orka-demo-inventory --head $branch --json number --jq '.[].number' | xargs -I{} gh pr close {} --repo sozercan/orka-demo-inventory --delete-branch"
-peq "git ls-remote --exit-code $DEMO_REPO refs/heads/$branch && git push $DEMO_REPO --delete $branch"
+peq "gh api -X DELETE repos/sozercan/orka-demo-inventory/git/refs/heads/$branch"
 
 workspace_of() {
   kubectl -n "$ORKA_NAMESPACE" get task "$1" \

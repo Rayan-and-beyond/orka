@@ -25,7 +25,7 @@ ensure_port_forward
 orka_connect
 peq "orka session delete inventory-audit"
 peq "kubectl -n $ORKA_NAMESPACE delete tasks -l demo.orka.ai/name=03-agent-substrate --wait=true"
-peq "git ls-remote --exit-code $DEMO_REPO refs/heads/$branch && git push $DEMO_REPO --delete $branch"
+peq "gh api -X DELETE repos/sozercan/orka-demo-inventory/git/refs/heads/$branch"
 peq "kubectl -n $ORKA_NAMESPACE delete executionworkspacecheckpoints -l demo.orka.ai/name=03-agent-substrate --wait=true"
 peq "kubectl -n $ORKA_NAMESPACE delete executionworkspaces -l demo.orka.ai/name=03-agent-substrate --wait=true"
 
@@ -130,7 +130,7 @@ ok "The file written by an Actor that no longer exists, in a workspace that was 
 chapter "Clean up"
 
 pe "kubectl -n orka-system delete executionworkspacecheckpoint audit-checkpoint"
-peq "git push $DEMO_REPO --delete $branch"
+peq "gh api -X DELETE repos/sozercan/orka-demo-inventory/git/refs/heads/$branch"
 wait_for "the restored workspace to be collected" \
   "[[ -z \$(kubectl -n $ORKA_NAMESPACE get executionworkspaces -l demo.orka.ai/name=03-agent-substrate --no-headers 2>/dev/null) ]]" 600 || true
 pe "kubectl ate get actors -a $atespace"
