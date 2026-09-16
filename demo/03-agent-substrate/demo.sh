@@ -58,7 +58,7 @@ chapter "Actors, not Pods"
 say "Agent Substrate runs each agent as an Actor: a gVisor sandbox with its own"
 say "kernel, started and stopped in milliseconds. Actors live in an Atespace."
 say "kubectl get pods will never show you one."
-pe "kubectl ate get actors -a $atespace -o json | jq -r '.actors[] | \"\\(.metadata.name)  \\(.status.state)\"'"
+pe "kubectl ate get actors -a $atespace -o json | jq -r '(.actors // [])[] | \"\\(.metadata.name)  \\(.status.state)\"' | grep . || echo 'no actors'"
 say "Orka's class for this provider: one Actor per Session, keep only data on"
 say "detach, and allow checkpoints."
 pe "kubectl -n orka-system get executionworkspaceclass substrate-session -o jsonpath='{.spec.lifecycle}' | jq"
@@ -68,7 +68,7 @@ chapter "Turn 1 — audit the code inside an Actor"
 pe "sed -n '12,36p' $rendered/turn-1-audit.yaml"
 pe "orka task create -f $rendered/turn-1-audit.yaml"
 wait_for "an Actor to boot" "(( \$(actor_count) >= 1 ))" 600
-pe "kubectl ate get actors -a $atespace -o json | jq -r '.actors[] | \"\\(.metadata.name)  \\(.status.state)\"'"
+pe "kubectl ate get actors -a $atespace -o json | jq -r '(.actors // [])[] | \"\\(.metadata.name)  \\(.status.state)\"' | grep . || echo 'no actors'"
 first_actor=$(actor_uid)
 say "That Actor is the agent's whole world: a fresh kernel, a durable volume,"
 say "and a network path only to the model proxy. No Git credential rides along."
@@ -87,7 +87,7 @@ say "On detach the class says DataOnly: the Actor's data is captured and the"
 say "Actor itself goes away. Nothing keeps running while nobody is asking."
 wait_for "the workspace to suspend" "[[ \$(ws_state $ws) == Suspended ]]" 600
 pe "kubectl -n orka-system get executionworkspace $ws"
-pe "kubectl ate get actors -a $atespace -o json | jq -r '.actors[] | \"\\(.metadata.name)  \\(.status.state)\"'"
+pe "kubectl ate get actors -a $atespace -o json | jq -r '(.actors // [])[] | \"\\(.metadata.name)  \\(.status.state)\"' | grep . || echo 'no actors'"
 ok "Zero Actors. Zero compute. The data is kept."
 
 chapter "Turn 2 — a fresh Actor boots from the kept data"
@@ -95,7 +95,7 @@ chapter "Turn 2 — a fresh Actor boots from the kept data"
 say "A read-only turn in the same Session: print what is on disk."
 pe "orka task create -f $rendered/turn-2-read.yaml"
 wait_for "a new Actor to boot" "(( \$(actor_count) >= 1 ))" 600
-pe "kubectl ate get actors -a $atespace -o json | jq -r '.actors[] | \"\\(.metadata.name)  \\(.status.state)\"'"
+pe "kubectl ate get actors -a $atespace -o json | jq -r '(.actors // [])[] | \"\\(.metadata.name)  \\(.status.state)\"' | grep . || echo 'no actors'"
 second_actor=$(actor_uid)
 [[ -n $second_actor && $second_actor != "$first_actor" ]] ||
   { bad "expected a new Actor, got ${second_actor:-none}"; exit 1; }
@@ -145,5 +145,5 @@ peq "gh api -X DELETE repos/sozercan/orka-demo-inventory/git/refs/heads/$branch"
 peq "gh api -X DELETE repos/sozercan/orka-demo-inventory/git/refs/heads/$branch-restored"
 wait_for "the restored workspace to be collected" \
   "[[ -z \$(kubectl -n $ORKA_NAMESPACE get executionworkspaces -l demo.orka.ai/name=03-agent-substrate --no-headers 2>/dev/null) ]]" 600 || true
-pe "kubectl ate get actors -a $atespace -o json | jq -r '.actors[] | \"\\(.metadata.name)  \\(.status.state)\"'"
+pe "kubectl ate get actors -a $atespace -o json | jq -r '(.actors // [])[] | \"\\(.metadata.name)  \\(.status.state)\"' | grep . || echo 'no actors'"
 printf '\n'

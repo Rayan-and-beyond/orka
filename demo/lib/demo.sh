@@ -167,6 +167,10 @@ orka() {
 }
 export -f orka 2>/dev/null || true
 
+# gh draws a spinner and probes the terminal when it thinks it has one; both
+# end up in the recording as escape noise. A pipe makes it behave.
+gh() { command gh "$@" | cat; }
+
 # orka_token — a short-lived API token for the demo client ServiceAccount.
 orka_token() {
   kubectl -n "$ORKA_NAMESPACE" create token orka-client --duration=4h
