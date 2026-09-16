@@ -94,7 +94,7 @@ wait_for "the workspace to suspend" \
   "[[ \$(kubectl -n $ORKA_NAMESPACE get executionworkspace $ws -o jsonpath='{.status.state}') == Suspended ]]" 600
 pe "kubectl -n orka-system get executionworkspace $ws"
 pe "kubectl -n $runtime_ns get sandbox $sb -o custom-columns=NAME:.metadata.name,MODE:.spec.operatingMode,UID:.metadata.uid"
-pe "kubectl -n $runtime_ns get pod $sb 2>&1 | tail -n 1"
+pe "kubectl -n $runtime_ns get pods -o name | grep sandbox-claim || echo 'no Sandbox Pod'"
 pe "kubectl -n $runtime_ns get pvc -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,SIZE:.status.capacity.storage"
 ok "No Sandbox Pod is running. The volume with the working tree is Bound and waiting."
 
