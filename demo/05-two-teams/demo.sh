@@ -53,7 +53,8 @@ pe "kubectl get pods -n team-payments -l app=orka-controller"
 pe "kubectl get pods -n team-inventory -l app=orka-controller"
 say "Their Providers differ. Payments is on an approved Claude model; inventory"
 say "uses GPT. Each key is a Secret in that team's namespace."
-pe "kubectl get providers -n team-payments -n team-inventory 2>/dev/null || kubectl get providers -A | grep team-"
+pe "kubectl -n team-payments get providers"
+pe "kubectl -n team-inventory get providers"
 say "The router validates the caller's Kubernetes token and forwards to that"
 say "team's installation. It holds no keys and runs no models."
 pe "kubectl -n $router_ns get configmap orka-compat-router -o jsonpath='{.data.routes\\.yaml}'"
@@ -68,8 +69,8 @@ pe "BOB=\$(kubectl -n team-inventory create token bob)"
 ALICE=$(kubectl -n team-payments create token alice)
 BOB=$(kubectl -n team-inventory create token bob)
 say "Ask the same URL which models it offers, once as Alice and once as Bob."
-pe "orka models list --compat anthropic --server $router_url --token \$ALICE"
-pe "orka models list --compat anthropic --server $router_url --token \$BOB"
+pe "orka models list --compat anthropic --server $router_url --namespace team-payments --token \$ALICE"
+pe "orka models list --compat anthropic --server $router_url --namespace team-inventory --token \$BOB"
 ok "One URL, two answers. The token chose the namespace; nothing in the request did."
 
 chapter "Same request, different homes"
@@ -79,19 +80,22 @@ say "becomes a Task in its own team's namespace, run by that team's Orka."
 pe "cat <<'TXT'
 $request
 TXT"
+export CLAUDE_CONFIG_DIR=$work/alice
 p "ANTHROPIC_API_KEY=\$ALICE claude -p --model approved-models/claude-opus-4.7 \"\$request\""
-CLAUDE_CONFIG_DIR=$work/alice ANTHROPIC_API_KEY=$ALICE claude -p --model approved-models/claude-opus-4.7 --no-session-persistence "$request" 2>"$work/alice.err" | sed -n '1,6p'
+ANTHROPIC_API_KEY=$ALICE claude -p --model approved-models/claude-opus-4.7 --no-session-persistence "$request" 2>"$work/alice.err" | sed -n '1,6p'
 nap 0.8
+export CLAUDE_CONFIG_DIR=$work/bob
 p "ANTHROPIC_API_KEY=\$BOB claude -p --model openai/gpt-5.5 \"\$request\""
-CLAUDE_CONFIG_DIR=$work/bob ANTHROPIC_API_KEY=$BOB claude -p --model openai/gpt-5.5 --no-session-persistence "$request" 2>"$work/bob.err" | sed -n '1,6p'
+ANTHROPIC_API_KEY=$BOB claude -p --model openai/gpt-5.5 --no-session-persistence "$request" 2>"$work/bob.err" | sed -n '1,6p'
 nap 0.8
 say "Where did the work run? In each team's own namespace, and nowhere else."
-pe "kubectl get tasks -n team-payments -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,IMAGE:.spec.image,PHASE:.status.phase"
-pe "kubectl get tasks -n team-inventory -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,IMAGE:.spec.image,PHASE:.status.phase"
+pe "kubectl get tasks -n team-payments -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,PHASE:.status.phase"
+pe "kubectl get tasks -n team-inventory -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,PHASE:.status.phase"
 
 chapter "The boundary"
 
 say "Bob asks for the payments team's Provider by name, through the same URL."
+export CLAUDE_CONFIG_DIR=$work/bob
 pex "ANTHROPIC_API_KEY=\$BOB claude -p --model approved-models/claude-opus-4.7 --no-session-persistence 'Reply with OK'"
 ok "Refused, with no fallback. The router does not even know what a Provider is; the inventory installation simply has no such thing."
 say "And Bob knocking on the payments installation's own door, with his token:"

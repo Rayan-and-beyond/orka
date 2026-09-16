@@ -71,12 +71,19 @@ reset_04() {
   kubectl -n "$ns" delete tasks -l orka.ai/security-target=nodejs-goof --ignore-not-found --wait=false >/dev/null 2>&1 || true
 }
 
+reset_05() {
+  for team in team-payments team-inventory; do
+    kubectl -n "$team" delete tasks --all --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  done
+}
+
 case ${1:-all} in
   01-*) reset_01 ;;
   02-*) reset_02 ;;
   03-*) reset_03 ;;
   04-*) reset_04 ;;
-  all) reset_01; reset_02; reset_03; reset_04 ;;
+  05-*) reset_05 ;;
+  all) reset_01; reset_02; reset_03; reset_04; reset_05 ;;
   *) echo "unknown demo: $1" >&2; exit 1 ;;
 esac
 echo "demo objects removed"
