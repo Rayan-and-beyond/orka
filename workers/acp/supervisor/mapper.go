@@ -387,56 +387,21 @@ func (prompt *promptState) rememberToolCallName(notification *acp.SessionNotific
 	if err != nil {
 		return err
 	}
-	// codex-acp 1.1.7 sends the actual server/tool in marked rawInput, then
-	// asks permission with only the same toolCallId. Never infer authority
-	// from its display title or from an unmarked argument object.
-	var markedMCPCall bool
-	if provider == providerKindCodex && len(call.Meta.IsMCPToolCall) > 0 {
-		if err := json.Unmarshal(call.Meta.IsMCPToolCall, &markedMCPCall); err != nil {
-			return fmt.Errorf("invalid codex MCP tool identity marker")
-		}
-	}
-	if markedMCPCall {
-		brokeredName, identityErr := codexMCPToolIdentity(call.RawInput, policy)
-		if identityErr != nil {
-			return identityErr
-		}
-		if brokeredName == "" {
-			previous, known := prompt.toolCallNames[id]
-			if !known || policy == nil {
-				return fmt.Errorf("codex MCP partial update has no verified tool identity")
-			}
-			descriptor, allowed := policy.Descriptor(previous)
-			if !allowed || !descriptor.Source.Brokered() {
-				return fmt.Errorf("codex MCP partial update has no verified brokered identity")
-			}
-			brokeredName = previous
-		}
-		if brokeredName != "" {
-			if name != "" && name != brokeredName {
-				return fmt.Errorf("ACP tool call has conflicting tool identities")
-			}
-			name = brokeredName
-		}
-	}
-	if provider == providerKindCodex && !markedMCPCall && name != "" && policy != nil {
-		if descriptor, allowed := policy.Descriptor(name); allowed && descriptor.Source.Brokered() {
-			if previous, known := prompt.toolCallNames[id]; !known || previous != name {
-				return fmt.Errorf("codex MCP name alone cannot establish tool identity")
+	// Codex's native start and completion envelopes have distinct proof rules.
+	if provider == providerKindCodex {
+		var markedMCPCall bool
+		if len(call.Meta.IsMCPToolCall) > 0 {
+			if err := json.Unmarshal(call.Meta.IsMCPToolCall, &markedMCPCall); err != nil {
+				return fmt.Errorf("invalid codex MCP tool identity marker")
 			}
 		}
-	}
-	if provider == providerKindCodex && !markedMCPCall && len(call.RawInput) > 0 && policy != nil {
-		if previous, known := prompt.toolCallNames[id]; known {
-			if descriptor, allowed := policy.Descriptor(previous); allowed && descriptor.Source.Brokered() {
-				// The pinned adapter's completion update repeats rawInput but
-				// omits the start marker. It may confirm, never establish or
-				// replace, this prompt's already-verified server/tool identity.
-				confirmed, identityErr := codexMCPToolIdentity(call.RawInput, policy)
-				if identityErr != nil || confirmed != previous {
-					return fmt.Errorf("codex MCP tool identity changed on an unmarked update")
-				}
-			}
+		if markedMCPCall {
+			name, err = prompt.codexMarkedToolName(id, name, call.RawInput, policy)
+		} else {
+			err = prompt.validateCodexUnmarkedToolIdentity(id, name, call.RawInput, policy)
+		}
+		if err != nil {
+			return err
 		}
 	}
 	if name == "" {
@@ -455,6 +420,58 @@ func (prompt *promptState) rememberToolCallName(notification *acp.SessionNotific
 		prompt.toolCallNames = make(map[string]string)
 	}
 	prompt.toolCallNames[id] = name
+	return nil
+}
+
+// codexMarkedToolName establishes identity only from a verified tuple; a
+// marker-only partial update can retain only an already-verified mapping.
+func (prompt *promptState) codexMarkedToolName(id, name string, raw json.RawMessage, policy *harnessv2.MCPToolPolicy) (string, error) {
+	brokeredName, err := codexMCPToolIdentity(raw, policy)
+	if err != nil {
+		return "", err
+	}
+	if brokeredName == "" {
+		previous, known := prompt.toolCallNames[id]
+		if !known || policy == nil {
+			return "", fmt.Errorf("codex MCP partial update has no verified tool identity")
+		}
+		descriptor, allowed := policy.Descriptor(previous)
+		if !allowed || !descriptor.Source.Brokered() {
+			return "", fmt.Errorf("codex MCP partial update has no verified brokered identity")
+		}
+		brokeredName = previous
+	}
+	if brokeredName != "" {
+		if name != "" && name != brokeredName {
+			return "", fmt.Errorf("ACP tool call has conflicting tool identities")
+		}
+		name = brokeredName
+	}
+	return name, nil
+}
+
+func (prompt *promptState) validateCodexUnmarkedToolIdentity(id, name string, raw json.RawMessage, policy *harnessv2.MCPToolPolicy) error {
+	if policy == nil {
+		return nil
+	}
+	if name != "" {
+		if descriptor, allowed := policy.Descriptor(name); allowed && descriptor.Source.Brokered() {
+			if previous, known := prompt.toolCallNames[id]; !known || previous != name {
+				return fmt.Errorf("codex MCP name alone cannot establish tool identity")
+			}
+		}
+	}
+	if len(raw) > 0 {
+		if previous, known := prompt.toolCallNames[id]; known {
+			if descriptor, allowed := policy.Descriptor(previous); allowed && descriptor.Source.Brokered() {
+				// Pinned completions omit the marker but must repeat the verified tuple.
+				confirmed, err := codexMCPToolIdentity(raw, policy)
+				if err != nil || confirmed != previous {
+					return fmt.Errorf("codex MCP tool identity changed on an unmarked update")
+				}
+			}
+		}
+	}
 	return nil
 }
 
