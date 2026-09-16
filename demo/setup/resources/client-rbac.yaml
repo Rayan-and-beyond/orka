@@ -22,6 +22,13 @@ rules:
   - apiGroups: [core.orka.ai]
     resources: [sessions]
     verbs: [get, list, delete]
+  # The coordinator acts as the caller. Opening a pull request needs the forge
+  # credential, and Orka only reads a Secret on a caller's behalf when that
+  # caller may read it. Grant this one Secret by name; nothing else.
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [github-credentials]
+    verbs: [get]
   # Chat, and the OpenAI- and Anthropic-compatible endpoints, are "chats".
   - apiGroups: [core.orka.ai]
     resources: [chats, chats/config]
