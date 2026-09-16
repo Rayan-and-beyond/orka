@@ -1059,7 +1059,7 @@ func (e *SubstrateWorkspaceExecutor) restoreHandoffToken(ctx context.Context, ac
 	return e.workspaceDaemonError(err)
 }
 
-func (e *SubstrateWorkspaceExecutor) workspaceDaemonClient() daemonprotocol.Client {
+func (e *SubstrateWorkspaceExecutor) workspaceDaemonClient() daemonprotocol.HTTPClient {
 	return daemonprotocol.HTTPClient{
 		RouterURL:      e.routerURL,
 		ActorDNSSuffix: e.actorDNSSuffix,
