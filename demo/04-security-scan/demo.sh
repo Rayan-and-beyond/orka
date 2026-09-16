@@ -30,7 +30,7 @@ say "Registering a repository starts its first scan. A scan is an agent Task"
 say "with a read-only clone: the reviewer writes a threat model, then reviews"
 say "the code slice by slice. Later scans run on the schedule, or on demand"
 say "with orka security scan run."
-latest_scan() { orka security scan list "$repo" -o json | jq -r 'sort_by(.startedAt) | last | .phase // empty'; }
+latest_scan() { orka security scan list "$repo" -o json | jq -r '.items | sort_by(.startedAt) | last | .phase // empty'; }
 watch_tasks "[[ \$(latest_scan) =~ ^(succeeded|failed)$ ]]" 20 orka.ai/security-target=$repo
 [[ $(latest_scan) == succeeded ]] || { bad "the scan run failed"; exit 1; }
 pe "orka security scan list $repo -o json | jq '.items[0] | {phase,sliceCount,reviewedSliceCount,acceptedFindings,droppedFindings,summary}'"

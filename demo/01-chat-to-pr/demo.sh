@@ -97,7 +97,8 @@ coder=$(kubectl -n "$ORKA_NAMESPACE" get tasks -l orka.ai/source=anthropic-proxy
   jq -r '[.items[] | select(.spec.type=="agent" and .spec.workspace.intent=="write")][0].metadata.name')
 say "The coder ran as a Codex session in a pooled runtime, with the repository"
 say "cloned into its workspace. Orka records what it did as execution events."
-pe "orka task events $coder | tail -n 12"
+pe "orka task events $coder | awk 'NR>1 {print \$2}' | sort | uniq -c | sort -rn | head -n 6"
+pe "orka task events $coder | grep ModelMessage | tail -n 2 | cut -c1-300"
 say "The agent never pushed. Orka's clean-room Publisher verified the tree and"
 say "published the branch; the receipt lives on the Task."
 pe "orka task status $coder"
