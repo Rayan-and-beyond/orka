@@ -30,6 +30,14 @@ delete_sessions() {
   for session in "$@"; do
     HOME=$config_dir orka session delete "$session" >/dev/null 2>&1 || true
   done
+  for _ in $(seq 1 60); do
+    local remaining=0
+    for session in "$@"; do
+      HOME=$config_dir orka session get "$session" >/dev/null 2>&1 && remaining=1
+    done
+    [ "$remaining" = 0 ] && break
+    sleep 5
+  done
   [ -n "${pf:-}" ] && kill "$pf" 2>/dev/null
   return 0
 }

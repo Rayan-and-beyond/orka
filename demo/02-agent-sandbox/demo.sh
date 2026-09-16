@@ -12,6 +12,7 @@ export runtime_ns
 ensure_port_forward
 orka_connect
 peq "orka session delete inventory-sandbox"
+wait_for "the previous Session to archive" "session_gone inventory-sandbox" 300
 peq "kubectl -n $ORKA_NAMESPACE delete tasks -l demo.orka.ai/name=02-agent-sandbox --wait=true"
 peq "kubectl -n $ORKA_NAMESPACE delete executionworkspaces -l demo.orka.ai/name=02-agent-sandbox --wait=true"
 peq "gh pr list --repo sozercan/orka-demo-inventory --head $branch --json number --jq '.[].number' | xargs -I{} gh pr close {} --repo sozercan/orka-demo-inventory --delete-branch"

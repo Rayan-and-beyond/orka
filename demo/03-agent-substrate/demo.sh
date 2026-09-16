@@ -24,6 +24,7 @@ branch=orka/security-audit
 ensure_port_forward
 orka_connect
 peq "orka session delete inventory-audit"
+wait_for "the previous Session to archive" "session_gone inventory-audit" 300
 peq "kubectl -n $ORKA_NAMESPACE delete tasks -l demo.orka.ai/name=03-agent-substrate --wait=true"
 peq "gh api -X DELETE repos/sozercan/orka-demo-inventory/git/refs/heads/$branch"
 peq "kubectl -n $ORKA_NAMESPACE delete executionworkspacecheckpoints -l demo.orka.ai/name=03-agent-substrate --wait=true"

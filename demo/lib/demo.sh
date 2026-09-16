@@ -200,6 +200,13 @@ stop_port_forward() {
 }
 trap stop_port_forward EXIT
 
+# session_gone NAME — true once the Session no longer exists. Session deletion
+# archives asynchronously; a new Task naming the same Session while that runs
+# is refused with a conflict, so callers wait on this after deleting.
+session_gone() {
+  ! orka session get "$1" >/dev/null 2>&1
+}
+
 # task_phase NAME — the Task's current phase, or empty.
 task_phase() {
   kubectl -n "$ORKA_NAMESPACE" get task "$1" -o jsonpath='{.status.phase}' 2>/dev/null || true

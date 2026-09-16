@@ -22,6 +22,25 @@ rules:
   - apiGroups: [core.orka.ai]
     resources: [sessions]
     verbs: [get, list, delete]
+  # Chat, and the OpenAI- and Anthropic-compatible endpoints, are "chats".
+  - apiGroups: [core.orka.ai]
+    resources: [chats, chats/config]
+    verbs: [create, get]
+  # Security scanning: the repository record, its scan runs, threat model,
+  # findings, and the finding actions a person takes.
+  - apiGroups: [core.orka.ai]
+    resources:
+      - repositoryscans/scans
+      - repositoryscans/status
+      - repositoryscans/threatmodel
+      - repositoryscans/slices
+      - repositoryscans/droppedfindings
+      - repositoryscans/findings
+      - securityfindings
+      - securityfindings/validation
+      - securityfindings/patches
+      - securityfindings/pullrequest
+    verbs: [get, list, create, update, patch]
   - apiGroups: [core.orka.ai]
     resources: [agents, tools, skills, providers, runtimepools]
     verbs: [get, list, watch]
