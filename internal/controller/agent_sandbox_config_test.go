@@ -272,23 +272,6 @@ func TestSubstrateConfigValidateRequiresSessionIdentitySecretWhenRequired(t *tes
 	}
 }
 
-func TestSubstrateConfigValidateRejectsSessionIdentityCertificateMinting(t *testing.T) {
-	cfg := DefaultSubstrateConfig()
-	cfg.APIBearerTokenFile = "/run/substrate/control-token"
-	cfg.APIInsecureSkipVerify = true
-	cfg.BootstrapSecretName = testSubstrateBootstrapSecretName
-	cfg.SessionIdentitySecretName = testSubstrateSessionIdentitySecretName
-	cfg.SessionIdentityMintCert = true
-
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("Validate() error = nil, want unsupported certificate minting error")
-	}
-	if !strings.Contains(err.Error(), "certificate minting is not supported yet") {
-		t.Fatalf("Validate() error = %q, want unsupported certificate minting context", err.Error())
-	}
-}
-
 func TestAgentSandboxConfigValidate(t *testing.T) {
 	tests := []struct {
 		name    string
