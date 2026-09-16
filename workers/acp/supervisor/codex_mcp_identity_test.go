@@ -30,6 +30,28 @@ func TestCodexMCPPermissionUsesCorrelatedStructuredIdentity(t *testing.T) {
 			wantName: "web_search",
 		},
 		{
+			name:      "invalid UTF8 tool call ID is rejected",
+			updates:   []string{"{\"sessionUpdate\":\"tool_call\",\"toolCallId\":\"\xff\",\"rawInput\":{\"server\":\"orka\",\"tool\":\"web_search\"},\"_meta\":{\"is_mcp_tool_call\":true}}"},
+			wantError: true,
+		},
+		{
+			name:      "malformed update call ID cannot establish identity",
+			updates:   []string{`{"sessionUpdate":"tool_call","toolCallId":"\ud800","rawInput":{"server":"orka","tool":"web_search"},"_meta":{"is_mcp_tool_call":true}}`},
+			wantError: true,
+		},
+		{
+			name:       "malformed permission ID cannot borrow replacement-character call",
+			updates:    []string{`{"sessionUpdate":"tool_call","toolCallId":"\ufffd","rawInput":{"server":"orka","tool":"web_search"},"_meta":{"is_mcp_tool_call":true}}`},
+			permission: `{"toolCallId":"\ud801","kind":"execute"}`,
+			wantError:  true,
+		},
+		{
+			name:       "legitimate replacement-character ID remains supported",
+			updates:    []string{`{"sessionUpdate":"tool_call","toolCallId":"\ufffd","rawInput":{"server":"orka","tool":"web_search"},"_meta":{"is_mcp_tool_call":true}}`},
+			permission: `{"toolCallId":"\ufffd","kind":"execute"}`,
+			wantName:   "web_search",
+		},
+		{
 			name:      "marked name-only update cannot establish authority",
 			updates:   []string{`{"sessionUpdate":"tool_call","toolCallId":"call/1","name":"web_search","_meta":{"is_mcp_tool_call":true}}`},
 			wantError: true,

@@ -312,6 +312,25 @@ func canonicalACPToolCallID(value string) (string, error) {
 	return canonicalACPToolCallIDPrefix + hex.EncodeToString(digest[:]), nil
 }
 
+// losslessACPToolCallID rejects Unicode repair before IDs enter the correlation
+// cache. Distinct unpaired surrogates must never collapse to the same native call.
+func losslessACPToolCallID(raw json.RawMessage) (string, error) {
+	var envelope struct {
+		ID json.RawMessage `json:"toolCallId"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return "", fmt.Errorf("invalid ACP tool call identity envelope")
+	}
+	if len(envelope.ID) == 0 {
+		return "", nil
+	}
+	var id string
+	if err := json.Unmarshal(envelope.ID, &id); err != nil || !wellFormedIdentityUnicode(envelope.ID) {
+		return "", fmt.Errorf("invalid ACP tool call identity Unicode")
+	}
+	return id, nil
+}
+
 type acpToolCallIdentity struct {
 	ToolCallID string `json:"toolCallId"`
 	ToolName   string `json:"name"`
@@ -360,7 +379,11 @@ func (prompt *promptState) rememberToolCallName(notification *acp.SessionNotific
 	if err != nil {
 		return err
 	}
-	id, err := canonicalACPToolCallID(call.ToolCallID)
+	nativeID, err := losslessACPToolCallID(notification.Update)
+	if err != nil {
+		return err
+	}
+	id, err := canonicalACPToolCallID(nativeID)
 	if err != nil {
 		return err
 	}
@@ -516,10 +539,14 @@ func mapPermission(event *acp.PermissionRequestEvent, at time.Time, ttl time.Dur
 			toolName = providerToolBash
 		}
 	}
+	nativeID, err := losslessACPToolCallID(event.Request.ToolCall)
+	if err != nil {
+		return nil, err
+	}
 	toolCallID := ""
-	if strings.TrimSpace(toolCall.ToolCallID) != "" {
+	if strings.TrimSpace(nativeID) != "" {
 		var err error
-		toolCallID, err = canonicalACPToolCallID(toolCall.ToolCallID)
+		toolCallID, err = canonicalACPToolCallID(nativeID)
 		if err != nil {
 			return nil, err
 		}

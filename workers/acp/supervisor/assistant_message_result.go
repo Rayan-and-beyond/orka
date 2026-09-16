@@ -8,10 +8,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/orka-agents/orka/internal/acp"
+	harnessv2 "github.com/orka-agents/orka/internal/harness/v2"
 )
 
 const (
-	maxAssistantResultMessageIDs     = 256
+	// Cover the admitted turn ceiling, distinct text/thought identities, and
+	// bounded housekeeping without imposing a smaller hidden turn limit.
+	maxAssistantResultMessageIDs     = 4 * int(harnessv2.MaxAgentMaxTurns)
 	maxAssistantResultMessageIDBytes = 512
 )
 

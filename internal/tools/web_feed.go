@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"golang.org/x/net/idna"
+	"golang.org/x/text/encoding/ianaindex"
 
 	"github.com/orka-agents/orka/internal/tokenexchange"
 )
@@ -33,6 +34,20 @@ const (
 )
 
 var errInvalidWebFeed = errors.New("invalid, unsupported, or oversized RSS/Atom feed")
+
+func webFeedCharsetReader(label string, input io.Reader) (io.Reader, error) {
+	encoding, err := ianaindex.IANA.Encoding(label)
+	if err != nil || encoding == nil {
+		return nil, errInvalidWebFeed
+	}
+	// Both wire bytes and transcoded UTF-8 bytes are bounded. No external lookup
+	// or entity hook is installed, and oversized conversions never look like EOF.
+	decoded, err := io.ReadAll(io.LimitReader(encoding.NewDecoder().Reader(input), maxBodySize+1))
+	if err != nil || len(decoded) > maxBodySize {
+		return nil, errInvalidWebFeed
+	}
+	return bytes.NewReader(decoded), nil
+}
 
 type webFeedFields struct {
 	title, summary, published, updated string
@@ -49,8 +64,8 @@ type webFeed struct {
 }
 
 // extractWebFeed recognizes the document root, not arbitrary nested feed-like
-// elements. The decoder stays strict, with no Entity or CharsetReader hooks:
-// declarations cannot resolve external entities, read files, or fetch links.
+// elements. The decoder stays strict and uses only a bounded local charset
+// converter. Declarations cannot resolve external entities, files, or links.
 // An empty extractor means this is not a feed. Never expose XML decoder errors,
 // which can contain source-controlled text, to the caller.
 func extractWebFeed(body []byte, contentType string, base *url.URL, allowPrivate bool, retrievedAt time.Time) (content, extractor string, omitted bool, err error) {
@@ -59,12 +74,22 @@ func extractWebFeed(body []byte, contentType string, base *url.URL, allowPrivate
 	bodyLimitExceeded := len(body) > maxBodySize
 	body = bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))
 	decoder := xml.NewDecoder(bytes.NewReader(body))
+	charsetConverted := false
+	decoder.CharsetReader = func(label string, input io.Reader) (io.Reader, error) {
+		// A repeated declaration must not repeatedly transcode the remaining
+		// document. Total conversion work is bounded to one local pass.
+		if charsetConverted {
+			return nil, errInvalidWebFeed
+		}
+		charsetConverted = true
+		return webFeedCharsetReader(label, input)
+	}
 	var root xml.StartElement
 	for {
 		offset := decoder.InputOffset()
 		token, tokenErr := decoder.Token()
 		if tokenErr != nil {
-			if expectedFeed || looksLikeWebFeedStart(body[offset:]) || looksLikeWebFeedStart(body[decoder.InputOffset():]) {
+			if expectedFeed || looksLikeWebFeedStart(body[min(offset, int64(len(body))):]) || looksLikeWebFeedStart(body[min(decoder.InputOffset(), int64(len(body))):]) {
 				return "", "", false, errInvalidWebFeed
 			}
 			return "", "", false, nil

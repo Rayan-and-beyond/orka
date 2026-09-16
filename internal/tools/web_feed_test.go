@@ -529,3 +529,47 @@ func TestWebFeedLabelsCoverageAndPerItemPublicationEvidence(t *testing.T) {
 		t.Fatal("model-facing tool metadata omits the feed/date contract")
 	}
 }
+
+func TestWebFetchFeedDeclaredCharacterSets(t *testing.T) {
+	for _, test := range []struct{ name, encoding, title, want string }{
+		{"latin1", "ISO-8859-1", "Caf\xe9", "Café"},
+		{"windows1252", "windows-1252", "\x93Quoted\x94", "“Quoted”"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := `<?xml version="1.0" encoding="` + test.encoding + `"?><rss version="2.0"><channel><item><title>` + test.title + `</title><link>https://news.example.org/story</link><pubDate>Tue, 15 Sep 2026 18:00:00 +0000</pubDate></item></channel></rss>`
+			tool, base := serveWebFeed(t, body, "application/rss+xml")
+			result, _ := executeWebFeed(t, tool, WebFetchArgs{URL: base + "/feed.xml"})
+			if result.Extractor != "rss_feed" || result.Truncated {
+				t.Fatalf("unexpected decoded feed: %#v", result)
+			}
+			assertWebFeedContains(t, result.Content, test.want, "https://news.example.org/story", "Published: Tue, 15 Sep 2026 18:00:00 +0000")
+		})
+	}
+}
+
+func TestWebFetchFeedCharsetExpansionIsBounded(t *testing.T) {
+	body := `<?xml version="1.0" encoding="ISO-8859-1"?><rss version="2.0"><channel><title>` + strings.Repeat("\xe9", maxBodySize/2+1) + `</title></channel></rss>`
+	if len(body) > maxBodySize {
+		t.Fatal("fixture must fit the wire limit")
+	}
+	tool, base := serveWebFeed(t, body, "application/rss+xml")
+	args, err := json.Marshal(WebFetchArgs{URL: base + "/feed.xml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := tool.Execute(context.Background(), args); err == nil || output != "" {
+		t.Fatal("oversized decoded XML was accepted")
+	}
+}
+
+func TestWebFetchFeedRepeatedCharsetDeclarationsAreRejected(t *testing.T) {
+	body := strings.Repeat(`<?xml version="1.0" encoding="ISO-8859-1"?>`, 1000) + `<rss version="2.0"><channel><title>Repeated declarations</title></channel></rss>`
+	tool, base := serveWebFeed(t, body, "application/rss+xml")
+	args, err := json.Marshal(WebFetchArgs{URL: base + "/feed.xml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := tool.Execute(context.Background(), args); err == nil || output != "" {
+		t.Fatal("repeated transcoding declarations were accepted")
+	}
+}

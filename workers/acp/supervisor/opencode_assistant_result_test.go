@@ -121,7 +121,7 @@ func TestSupervisorOpenCodeAssistantResultHTTP(t *testing.T) {
 		},
 		{name: "anonymous_empty_only_keeps_legacy_placeholder", chunks: []assistantResultTestChunk{text("", "")}, want: "Prompt completed without textual output."},
 		{name: "256_empty_message_identities_are_observed", chunks: emptyMessages(256), want: "Prompt completed without textual output."},
-		{name: "257_empty_message_identities_are_rejected", chunks: emptyMessages(257), rejectStream: true, fail: true},
+		{name: "257_empty_message_identities_are_supported", chunks: emptyMessages(257), want: "Prompt completed without textual output."},
 		{name: "512_byte_empty_identity_is_accepted", chunks: []assistantResultTestChunk{text(strings.Repeat("m", 512), "")}, want: "Prompt completed without textual output."},
 		{name: "513_byte_empty_identity_is_rejected", chunks: []assistantResultTestChunk{text(strings.Repeat("m", 513), "")}, rejectStream: true, fail: true},
 		{
@@ -204,8 +204,8 @@ func TestSupervisorOpenCodeAssistantResultHTTP(t *testing.T) {
 		},
 		{name: "256_distinct_ids_accepted", chunks: messages(256), want: "text-255"},
 		{name: "256_distinct_text_and_thought_ids_accepted", chunks: thoughtsThenFinal(255), want: "Visible final."},
-		{name: "257_distinct_text_and_thought_ids_fail_closed", chunks: thoughtsThenFinal(256), rejectStream: true, fail: true},
-		{name: "257_distinct_ids_fail_closed", chunks: messages(257), rejectStream: true, fail: true},
+		{name: "257_distinct_text_and_thought_ids_are_supported", chunks: thoughtsThenFinal(256), want: "Visible final."},
+		{name: "257_distinct_ids_are_supported", chunks: messages(257), want: "text-256"},
 		{name: "512_byte_id_accepted", chunks: []assistantResultTestChunk{text(strings.Repeat("m", 512), "Bounded identity.")}, want: "Bounded identity."},
 		{name: "513_byte_id_fails_closed", chunks: []assistantResultTestChunk{text(strings.Repeat("m", 513), "Do not accept.")}, rejectStream: true, fail: true},
 		{name: "512_byte_utf8_id_accepted", chunks: []assistantResultTestChunk{text(strings.Repeat("é", 256), "UTF-8 identity.")}, want: "UTF-8 identity."},
@@ -850,4 +850,27 @@ func TestSupervisorOpenCodeAssistantResultMalformedIdentityCannotMergeWithReplac
 	}
 	request, raw := fixture.startPrompt(t, "prompt-1", chunks)
 	fixture.assertRejectedStreamAndReplay(t, request, raw, chunks)
+}
+
+func TestAssistantResultCapacityCoversAdmittedTurnBudget(t *testing.T) {
+	var result assistantMessageResult
+	for turn := range int(harnessv2.MaxAgentMaxTurns) {
+		if err := result.append(fmt.Sprintf("thought-%d", turn), "", assistantResultTestLimit); err != nil {
+			t.Fatal(err)
+		}
+		if err := result.append(fmt.Sprintf("answer-%d", turn), "answer", assistantResultTestLimit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if result.text.String() != "answer" {
+		t.Fatal("maximum admitted turn count lost its final answer")
+	}
+	for len(result.seen) < maxAssistantResultMessageIDs {
+		if err := result.append(fmt.Sprintf("extra-%d", len(result.seen)), "answer", assistantResultTestLimit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := result.append("beyond-bound", "answer", assistantResultTestLimit); err == nil {
+		t.Fatal("identity tracking became unbounded")
+	}
 }
