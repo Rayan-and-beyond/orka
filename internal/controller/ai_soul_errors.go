@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
+	corev1alpha1 "github.com/orka-agents/orka/api/v1alpha1"
 	"github.com/orka-agents/orka/internal/agentcontext"
 	"github.com/orka-agents/orka/internal/store"
 )
@@ -23,4 +26,9 @@ func isPermanentAISoulConfigurationError(err error) bool {
 	var permanent *permanentAISoulConfigurationError
 	return errors.As(err, &permanent) || agentcontext.IsInvalidSource(err) ||
 		isPermanentACPAgentConfigurationError(err) || errors.Is(err, store.ErrSessionConfigurationMismatch)
+}
+
+func aiSoulTaskChanged(task *corev1alpha1.Task) error {
+	return apierrors.NewConflict(corev1alpha1.GroupVersion.WithResource("tasks").GroupResource(), task.Name,
+		errors.New("task changed before AI soul preparation; reconcile the current task"))
 }

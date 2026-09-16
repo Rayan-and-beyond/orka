@@ -5,13 +5,17 @@ import (
 	"fmt"
 
 	corev1alpha1 "github.com/orka-agents/orka/api/v1alpha1"
+	"github.com/orka-agents/orka/internal/acp"
 	"github.com/orka-agents/orka/internal/agentcontext"
 )
 
 const (
+	soulPatternField      = "pattern"
 	soulMinLengthField    = "minLength"
 	soulInlineField       = "inline"
 	soulConfigMapRefField = "configMapRef"
+	// Match Go TrimSpace (Unicode White_Space), not the regex engine-specific \s.
+	soulNonWhitespacePattern = "[^\\t-\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]"
 )
 
 func soulParameterSchema() map[string]any {
@@ -23,9 +27,9 @@ func soulParameterSchema() map[string]any {
 			"Use inline Markdown or an Agent-namespace ConfigMap with its exact SHA-256 digest. " +
 			"Copilot instructions cannot contain @ characters because its native loader processes file imports.",
 		jsonSchemaPropertiesField: map[string]any{
-			soulInlineField:       map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, soulMinLengthField: 1, "maxLength": agentcontext.MaxSoulBytes},
-			soulConfigMapRefField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeObject, jsonSchemaPropertiesField: map[string]any{"name": map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, soulMinLengthField: 1}, "key": map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, soulMinLengthField: 1}}, jsonSchemaRequiredField: []string{"name", "key"}},
-			"digest":              map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, "pattern": "^sha256:[0-9a-f]{64}$"},
+			soulInlineField:       map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, soulMinLengthField: 1, soulPatternField: soulNonWhitespacePattern, "maxLength": agentcontext.MaxSoulBytes},
+			soulConfigMapRefField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeObject, jsonSchemaPropertiesField: map[string]any{"name": map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, soulMinLengthField: 1, soulPatternField: soulNonWhitespacePattern}, "key": map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, soulMinLengthField: 1, soulPatternField: soulNonWhitespacePattern}}, jsonSchemaRequiredField: []string{"name", "key"}},
+			"digest":              map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, soulPatternField: "^sha256:[0-9a-f]{64}$"},
 		},
 		"oneOf": []any{
 			map[string]any{
@@ -70,4 +74,29 @@ func soulArgument(value any) (*corev1alpha1.SoulSource, error) {
 		return nil, err
 	}
 	return &source, nil
+}
+
+// validateInlineCopilotInstructions checks only known inline portions of the
+// completed Agent. It does not resolve ConfigMaps; the controller must still
+// validate the resolved configuration before dispatch.
+func validateInlineCopilotInstructions(agent *corev1alpha1.Agent) error {
+	if agent == nil || agent.Spec.Runtime == nil {
+		return nil
+	}
+	runtime := agent.Spec.Runtime
+	if runtime.Type != corev1alpha1.AgentRuntimeCopilot || runtime.RuntimeRef != nil ||
+		runtime.ContractVersion == nil || *runtime.ContractVersion != corev1alpha1.AgentRuntimeContractHarnessV2 {
+		return nil
+	}
+	if role := agent.Spec.SystemPrompt; role != nil {
+		if err := acp.ValidateCopilotInstructions(role.Inline); err != nil {
+			return fmt.Errorf("agent.spec.systemPrompt.inline: %w", err)
+		}
+	}
+	if soul := agent.Spec.Soul; soul != nil {
+		if err := acp.ValidateCopilotInstructions(soul.Inline); err != nil {
+			return fmt.Errorf("agent.spec.soul.inline: %w", err)
+		}
+	}
+	return nil
 }

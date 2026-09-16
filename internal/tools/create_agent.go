@@ -127,7 +127,7 @@ func (t *CreateAgentTool) Parameters() json.RawMessage {
 			},
 			"systemPrompt": {
 				"type": "string",
-				"description": "Role instructions for the agent; persona defaults may be supplied separately through soul."
+				"description": "Role instructions for the agent; persona defaults may be supplied separately through soul. Built-in harness v2 Copilot instructions cannot contain @ characters."
 			},
 			"model": {
 				"type": "object",
@@ -466,6 +466,9 @@ func (t *CreateAgentTool) Execute(ctx context.Context, args json.RawMessage) (st
 		return "", err
 	}
 	if err := agentcontext.ValidateSoulRuntime(agent); err != nil {
+		return "", err
+	}
+	if err := validateInlineCopilotInstructions(agent); err != nil {
 		return "", err
 	}
 

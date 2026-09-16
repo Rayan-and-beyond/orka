@@ -119,7 +119,7 @@ func (r *TaskReconciler) prepareAISoul(ctx context.Context, task *corev1alpha1.T
 			return err
 		}
 		if current.UID != task.UID || current.Generation != task.Generation || !current.DeletionTimestamp.IsZero() {
-			return invalidAISoulConfiguration("task identity changed before AI soul binding")
+			return aiSoulTaskChanged(task)
 		}
 		if err := validateAISoulIntroduction(current); err != nil {
 			return err

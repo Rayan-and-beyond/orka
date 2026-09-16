@@ -27,7 +27,7 @@ func (t *UpdateAgentTool) Description() string {
 }
 
 func (t *UpdateAgentTool) Parameters() json.RawMessage {
-	return marshalAgentSchema(map[string]any{jsonSchemaTypeField: jsonSchemaTypeObject, jsonSchemaPropertiesField: map[string]any{nameField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: agentNameDescription}, namespaceField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: namespaceDescription}, systemPromptField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: "Role instructions for the agent. Built-in runtimes deliver these through their native instruction mechanism."}, toolsField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeArray, itemsField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString}, jsonSchemaDescriptionField: "Tool names to attach"}, modelField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeObject, jsonSchemaPropertiesField: map[string]any{
+	return marshalAgentSchema(map[string]any{jsonSchemaTypeField: jsonSchemaTypeObject, jsonSchemaPropertiesField: map[string]any{nameField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: agentNameDescription}, namespaceField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: namespaceDescription}, systemPromptField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: "Role instructions for the agent. Built-in runtimes deliver these through their native instruction mechanism. Built-in harness v2 Copilot instructions cannot contain @ characters."}, toolsField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeArray, itemsField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeString}, jsonSchemaDescriptionField: "Tool names to attach"}, modelField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeObject, jsonSchemaPropertiesField: map[string]any{
 		"provider": map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: "Model provider (e.g. anthropic, openai). For OpenCode this is normalized into model.name."},
 		nameField:  map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, jsonSchemaDescriptionField: "Model name. OpenCode accepts a provider/model ID or a bare model name when the existing provider is retained."},
 		"temperature": map[string]any{jsonSchemaTypeField: "number", "minimum": 0, "maximum": 2,
@@ -106,6 +106,9 @@ func (t *UpdateAgentTool) Execute(ctx context.Context, args json.RawMessage) (st
 
 	if err := agentcontext.ValidateSoulRuntime(agent); err != nil {
 		return ChatToolErrorResult("invalid_arguments", err.Error(), "Use an AI worker Agent or a built-in orka.harness.v2 Agent; external runtimeRef and orka.harness.v1 Agents do not support souls.")
+	}
+	if err := validateInlineCopilotInstructions(agent); err != nil {
+		return ChatToolErrorResult("invalid_arguments", err.Error(), "Inline referenced text; built-in harness v2 Copilot role and soul instructions cannot contain @ characters.")
 	}
 
 	if isOpenCodeAgent(agent) {
