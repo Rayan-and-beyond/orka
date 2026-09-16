@@ -51,7 +51,7 @@ chapter "A person decides to fix it"
 say "Remediation never happens by itself. A person asks for a patch; a coder"
 say "agent works in a write-intent workspace; Orka's Publisher opens the PR."
 pe "orka security finding patch $finding"
-watch_tasks "orka security finding patches $finding -o json | jq -e '[.items[] | select(.status == \"pr_opened\" or (.status | test(\"failed|rejected\")))] | length > 0'" 20 orka.ai/security-target=$repo
+watch_tasks "orka security finding patches $finding -o json | jq -e '[.items[] | select(.status == \"pr_opened\" or (.status | test(\"failed|rejected\")))] | length > 0'" 20 orka.ai/security-finding-id=$finding
 if orka security finding patches "$finding" -o json | jq -e '[.items[] | select(.status | test("failed|rejected"))] | length > 0' >/dev/null; then
   bad "the patch proposal did not reach pr_opened"; orka security finding patches "$finding" -o json | jq '.items[] | {status,reason}' >&2; exit 1
 fi
