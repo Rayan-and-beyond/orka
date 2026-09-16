@@ -29,9 +29,13 @@ workspace_of() {
   kubectl -n "$ORKA_NAMESPACE" get task "$1" \
     -o jsonpath='{.metadata.labels.acp\.workspace\.orka\.ai/execution-workspace}' 2>/dev/null
 }
+# The Sandbox that belongs to this Session's pool, not any that lingers.
 sandbox_name() {
+  local pool
+  pool=$(kubectl -n "$ORKA_NAMESPACE" get task inventory-implement -o jsonpath='{.status.execution.runtimePoolName}' 2>/dev/null)
+  [[ -n $pool ]] || return 0
   kubectl -n "$runtime_ns" get sandboxes.agents.x-k8s.io -o json 2>/dev/null |
-    jq -r '.items[0].metadata.name // empty'
+    jq -r --arg pool "$pool" '[.items[] | select(.metadata.name | startswith($pool))][0].metadata.name // empty'
 }
 sandbox_mode() {
   kubectl -n "$runtime_ns" get sandboxes.agents.x-k8s.io "$1" -o jsonpath='{.spec.operatingMode}' 2>/dev/null
@@ -58,9 +62,9 @@ say "The provider's objects appear as Orka binds a dedicated, single-session"
 say "runtime pool to a Sandbox."
 wait_for "the Sandbox to exist" "[[ -n \$(sandbox_name) ]]" 300
 sb=$(sandbox_name)
-wait_for "the Sandbox Pod" "kubectl -n $runtime_ns get pods --no-headers 2>/dev/null | grep sandbox-claim | grep -q Running" 300
+wait_for "the Sandbox Pod" "kubectl -n $runtime_ns get pod $sb --no-headers 2>/dev/null | grep -q Running" 300
 pe "kubectl -n $runtime_ns get sandboxclaims,sandboxes"
-pod=$(kubectl -n "$runtime_ns" get pods -o name | grep sandbox-claim | head -n1 | cut -d/ -f2)
+pod=$sb
 pe "kubectl -n $runtime_ns get pod $pod"
 sb_uid=$(kubectl -n "$runtime_ns" get sandboxes.agents.x-k8s.io "$sb" -o jsonpath='{.metadata.uid}')
 say "The Sandbox Pod holds the agent runtime and nothing else. No Git token,"
@@ -90,7 +94,7 @@ wait_for "the workspace to suspend" \
   "[[ \$(kubectl -n $ORKA_NAMESPACE get executionworkspace $ws -o jsonpath='{.status.state}') == Suspended ]]" 600
 pe "kubectl -n orka-system get executionworkspace $ws"
 pe "kubectl -n $runtime_ns get sandbox $sb -o custom-columns=NAME:.metadata.name,MODE:.spec.operatingMode,UID:.metadata.uid"
-pe "kubectl -n $runtime_ns get pods | grep sandbox-claim || echo 'no Sandbox Pod'"
+pe "kubectl -n $runtime_ns get pod $sb 2>&1 | tail -n 1"
 pe "kubectl -n $runtime_ns get pvc -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,SIZE:.status.capacity.storage"
 ok "No Sandbox Pod is running. The volume with the working tree is Bound and waiting."
 

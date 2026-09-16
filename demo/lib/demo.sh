@@ -211,8 +211,10 @@ session_gone() {
 # previous run. Tasks bound to a Session keep their cleanup authority until
 # the Session is archived, so the Sessions go first and the wait is real.
 delete_demo_objects() {
-  local selector="demo.orka.ai/name=$1" sessions session
+  local selector="demo.orka.ai/name=$1" sessions session workspaces workspace
   sessions=$(kubectl -n "$ORKA_NAMESPACE" get tasks -l "$selector" -o jsonpath='{range .items[*]}{.spec.sessionRef.name}{"\n"}{end}' 2>/dev/null | sort -u | grep . || true)
+  # Workspaces carry no demo label; the Tasks point at them.
+  workspaces=$(kubectl -n "$ORKA_NAMESPACE" get tasks -l "$selector" -o jsonpath='{range .items[*]}{.metadata.labels.acp\.workspace\.orka\.ai/execution-workspace}{"\n"}{end}' 2>/dev/null | sort -u | grep . || true)
   for session in $sessions; do
     orka session delete "$session" >/dev/null 2>&1 || true
   done
@@ -221,7 +223,9 @@ delete_demo_objects() {
   done
   kubectl -n "$ORKA_NAMESPACE" delete tasks -l "$selector" --ignore-not-found --wait=true --timeout=300s >/dev/null 2>&1 || true
   kubectl -n "$ORKA_NAMESPACE" delete executionworkspacecheckpoints -l "$selector" --ignore-not-found --wait=true --timeout=300s >/dev/null 2>&1 || true
-  kubectl -n "$ORKA_NAMESPACE" delete executionworkspaces -l "$selector" --ignore-not-found --wait=true --timeout=300s >/dev/null 2>&1 || true
+  for workspace in $workspaces; do
+    kubectl -n "$ORKA_NAMESPACE" delete executionworkspace "$workspace" --ignore-not-found --wait=true --timeout=300s >/dev/null 2>&1 || true
+  done
 }
 
 # task_phase NAME — the Task's current phase, or empty.

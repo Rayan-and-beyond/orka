@@ -14,6 +14,9 @@ ns=${ORKA_NAMESPACE:-orka-system}
 api=${ORKA_API:-http://127.0.0.1:8080}
 config_dir=${ORKA_CONFIG_DIR:-$demo_root/setup/state/orka-config}
 
+workspaces_of() {
+  kubectl -n "$ns" get tasks -l "demo.orka.ai/name=$1" -o jsonpath='{range .items[*]}{.metadata.labels.acp\.workspace\.orka\.ai/execution-workspace}{"\n"}{end}' 2>/dev/null | sort -u | grep . || true
+}
 sessions_of() {
   kubectl -n "$ns" get tasks -l "demo.orka.ai/name=$1" -o jsonpath='{range .items[*]}{.spec.sessionRef.name}{"\n"}{end}' 2>/dev/null | sort -u | grep . || true
 }
@@ -51,15 +54,17 @@ reset_01() {
   kubectl -n "$ns" delete agents -l orka.ai/created-by=chat --ignore-not-found --wait=false >/dev/null 2>&1 || true
 }
 reset_02() {
+  local ws; ws=$(workspaces_of 02-agent-sandbox)
   delete_sessions $(sessions_of 02-agent-sandbox)
   kubectl -n "$ns" delete tasks -l demo.orka.ai/name=02-agent-sandbox --ignore-not-found --wait=false >/dev/null 2>&1 || true
-  kubectl -n "$ns" delete executionworkspaces -l demo.orka.ai/name=02-agent-sandbox --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  for w in $ws; do kubectl -n "$ns" delete executionworkspace "$w" --ignore-not-found --wait=false >/dev/null 2>&1 || true; done
 }
 reset_03() {
+  local ws; ws=$(workspaces_of 03-agent-substrate)
   delete_sessions $(sessions_of 03-agent-substrate)
   kubectl -n "$ns" delete tasks -l demo.orka.ai/name=03-agent-substrate --ignore-not-found --wait=false >/dev/null 2>&1 || true
   kubectl -n "$ns" delete executionworkspacecheckpoints -l demo.orka.ai/name=03-agent-substrate --ignore-not-found --wait=false >/dev/null 2>&1 || true
-  kubectl -n "$ns" delete executionworkspaces -l demo.orka.ai/name=03-agent-substrate --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  for w in $ws; do kubectl -n "$ns" delete executionworkspace "$w" --ignore-not-found --wait=false >/dev/null 2>&1 || true; done
 }
 reset_04() {
   kubectl -n "$ns" delete repositoryscans -l demo.orka.ai/name=04-security-scan --ignore-not-found --wait=false >/dev/null 2>&1 || true
