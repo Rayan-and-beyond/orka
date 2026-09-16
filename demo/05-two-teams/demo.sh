@@ -30,6 +30,10 @@ _router_pf=$!
 trap 'kill $_router_pf 2>/dev/null; stop_port_forward' EXIT
 wait_for "the router port-forward" "curl -fsS -m 2 $router_url/healthz" 60
 
+# Claude Code resets terminal modes on exit when it owns a tty; a pipe keeps
+# those escape codes out of the recording without changing its output.
+claude() { command claude "$@" 2>&1 | cat; }
+
 # Same-request helper: the sentence both developers send.
 request="Run a container task that prints today's date and tell me what it printed."
 
