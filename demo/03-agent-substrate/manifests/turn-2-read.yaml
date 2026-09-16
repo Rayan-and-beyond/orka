@@ -1,9 +1,9 @@
-# Turn 1: an Actor on Agent Substrate, not a Pod. The class substrate-session
-# keeps only data on detach; the process is gone.
+# Turn 2: same Session. A fresh Actor boots from the kept data; AUDIT.md is
+# still on disk even though the process that wrote it no longer exists.
 apiVersion: core.orka.ai/v1alpha1
 kind: Task
 metadata:
-  name: audit-notes
+  name: audit-read
   namespace: orka-system
   labels:
     demo.orka.ai/name: 03-agent-substrate
@@ -13,7 +13,6 @@ spec:
     name: codex-coder
   sessionRef:
     name: inventory-audit
-    create: true
   execution:
     workspace:
       classRef:
@@ -27,7 +26,5 @@ spec:
       name: github-credentials
   timeout: 20m
   prompt: |
-    Audit this repository for input validation gaps in the HTTP handlers.
-    Write your findings to AUDIT.md in the repository root, at most twelve
-    lines, one finding per line with the file and function. Do not change any
-    other file. Reply with the exact contents of AUDIT.md.
+    Do not change any file. Run: pwd; ls; cat AUDIT.md. Reply with the exact
+    combined output.

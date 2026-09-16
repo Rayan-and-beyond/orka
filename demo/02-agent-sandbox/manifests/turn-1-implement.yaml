@@ -1,6 +1,7 @@
-# Turn 2: the same Session, so the same suspended Sandbox wakes up with the
-# plan still on disk. Write intent means Orka's Publisher will verify and
-# publish the result and open the pull request.
+# Turn 1: implement the change inside a kubernetes-sigs Agent Sandbox.
+# The Task names a class, not a provider: sandbox-session means "one Sandbox
+# per Session, keep its data when the agent detaches". Write intent means
+# Orka's Publisher verifies the tree, publishes the branch, and opens the PR.
 apiVersion: core.orka.ai/v1alpha1
 kind: Task
 metadata:
@@ -14,6 +15,7 @@ spec:
     name: codex-coder
   sessionRef:
     name: inventory-sandbox
+    create: true
   execution:
     workspace:
       classRef:
@@ -37,7 +39,7 @@ spec:
     createPR: true
   timeout: 30m
   prompt: |
-    PLAN.md in the repository root is the plan you wrote in the previous turn.
-    Print it first, then implement it exactly: the endpoint, the unit test,
-    and the README entry. Delete PLAN.md when you are done and run go test ./...
-    Reply with the test output and the list of files you changed.
+    Add a GET /healthz endpoint that returns HTTP 200 with the JSON body
+    {"status":"ok"}. Add a unit test for it in the existing style and add the
+    endpoint to the API table in README.md. Run go test ./... before you
+    finish. Reply with the test output and the list of files you changed.

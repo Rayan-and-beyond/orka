@@ -7,6 +7,7 @@ cd "$repo_root"
 here=demo/03-agent-substrate
 atespace=orka-system
 : "${ATE_BIN:=$demo_root/setup/state/kubectl-ate}"
+[[ -x $ATE_BIN ]] || ATE_BIN=$repo_root/bin/substrate-eval/kubectl-ate
 export ATE_BIN
 # `kubectl ate` is Substrate's kubectl plugin. The demo types it that way; the
 # function resolves the plugin binary the setup built.
@@ -19,7 +20,9 @@ kubectl() {
   fi
 }
 
+branch=orka/security-audit
 peq "kubectl -n $ORKA_NAMESPACE delete tasks -l demo.orka.ai/name=03-agent-substrate --wait=true"
+peq "git ls-remote --exit-code $DEMO_REPO refs/heads/$branch && git push $DEMO_REPO --delete $branch"
 peq "kubectl -n $ORKA_NAMESPACE delete executionworkspacecheckpoints -l demo.orka.ai/name=03-agent-substrate --wait=true"
 peq "kubectl -n $ORKA_NAMESPACE delete executionworkspaces -l demo.orka.ai/name=03-agent-substrate --wait=true"
 ensure_port_forward
@@ -54,20 +57,24 @@ pe "kubectl -n orka-system get executionworkspaceclass substrate-session -o json
 
 chapter "Turn 1 — audit the code inside an Actor"
 
-pe "sed -n '1,28p' $here/manifests/turn-1-notes.yaml"
-pe "orka task create -f $here/manifests/turn-1-notes.yaml"
+pe "sed -n '12,36p' $here/manifests/turn-1-audit.yaml"
+pe "orka task create -f $here/manifests/turn-1-audit.yaml"
 wait_for "an Actor to boot" "(( \$(actor_count) >= 1 ))" 600
 pe "kubectl ate get actors -a $atespace"
 first_actor=$(actor_uid)
 say "That Actor is the agent's whole world: a fresh kernel, a durable volume,"
 say "and a network path only to the model proxy. No Git credential rides along."
-wait_task audit-notes 1200
-pe "orka task result audit-notes"
-ok "AUDIT.md is on the Actor's durable volume."
+wait_task audit-write 1200
+pe "orka task result audit-write"
+say "The Actor never pushed. Orka's Publisher verified the tree and published"
+say "the branch; the receipt is on the Task."
+pe "orka task status audit-write | grep -E 'Delivery|Publication|Verified'"
+pe "git ls-remote $DEMO_REPO refs/heads/$branch"
+ok "AUDIT.md is on the Actor's durable volume and on a published branch."
 
 chapter "Suspend keeps the data, not the process"
 
-ws=$(workspace_of audit-notes)
+ws=$(workspace_of audit-write)
 say "On detach the class says DataOnly: the Actor's data is captured and the"
 say "Actor itself goes away. Nothing keeps running while nobody is asking."
 wait_for "the workspace to suspend" "[[ \$(ws_state $ws) == Suspended ]]" 600
@@ -77,16 +84,18 @@ ok "Zero Actors. Zero compute. The data is kept."
 
 chapter "Turn 2 — a fresh Actor boots from the kept data"
 
-pe "orka task create -f $here/manifests/turn-2-continue.yaml"
+say "A read-only turn in the same Session: print what is on disk."
+pe "orka task create -f $here/manifests/turn-2-read.yaml"
 wait_for "a new Actor to boot" "(( \$(actor_count) >= 1 ))" 600
 pe "kubectl ate get actors -a $atespace"
 second_actor=$(actor_uid)
 [[ -n $second_actor && $second_actor != "$first_actor" ]] ||
   { bad "expected a new Actor, got ${second_actor:-none}"; exit 1; }
 ok "A different Actor UID: cold boot from data, not a thawed process."
-wait_task audit-continue 1200
-pe "orka task result audit-continue"
-say "The audit written by the first Actor was there for the second."
+wait_task audit-read 1200
+pe "orka task result audit-read"
+say "The audit written by the first Actor was there for the second. Nothing"
+say "was re-cloned: the working tree came from the kept data."
 
 chapter "Export a checkpoint"
 
@@ -111,7 +120,7 @@ say "UID and digest, so a swapped checkpoint is refused."
 cp_uid=$(kubectl -n "$ORKA_NAMESPACE" get executionworkspacecheckpoint audit-checkpoint -o jsonpath='{.metadata.uid}')
 cp_digest=$(kubectl -n "$ORKA_NAMESPACE" get executionworkspacecheckpoint audit-checkpoint -o jsonpath='{.status.digest}')
 sed "s/CHECKPOINT_UID/$cp_uid/; s/CHECKPOINT_DIGEST/$cp_digest/" "$here/manifests/turn-3-restore.yaml" >"$demo_root/setup/state/03-restore.yaml"
-pe "sed -n '13,24p' $demo_root/setup/state/03-restore.yaml"
+pe "sed -n '14,25p' $demo_root/setup/state/03-restore.yaml"
 pe "orka task create -f $demo_root/setup/state/03-restore.yaml"
 wait_task audit-restore 1200
 pe "orka task result audit-restore"
@@ -120,6 +129,7 @@ ok "The file written by an Actor that no longer exists, in a workspace that was 
 chapter "Clean up"
 
 pe "kubectl -n orka-system delete executionworkspacecheckpoint audit-checkpoint"
+peq "git push $DEMO_REPO --delete $branch"
 wait_for "the restored workspace to be collected" \
   "[[ -z \$(kubectl -n $ORKA_NAMESPACE get executionworkspaces -l demo.orka.ai/name=03-agent-substrate --no-headers 2>/dev/null) ]]" 600 || true
 pe "kubectl ate get actors -a $atespace"

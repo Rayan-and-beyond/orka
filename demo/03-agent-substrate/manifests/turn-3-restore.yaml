@@ -1,5 +1,6 @@
-# Turn 3: a new Session, restored from the checkpoint. The original workspace
-# and its Actor were deleted; the bytes come back.
+# Turn 3: a new Task, restored from the checkpoint. The original workspace
+# and its Actors are gone; the bytes come back. No repository is cloned here:
+# the checkpoint is the workspace.
 apiVersion: core.orka.ai/v1alpha1
 kind: Task
 metadata:
@@ -22,5 +23,5 @@ spec:
         digest: CHECKPOINT_DIGEST
   timeout: 20m
   prompt: |
-    Print AUDIT.md from the repository root exactly as it is on disk. Reply
-    with its contents and nothing else.
+    Run: pwd; ls; cat AUDIT.md. Reply with the exact combined output and
+    nothing else.

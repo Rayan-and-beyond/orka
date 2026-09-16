@@ -19,6 +19,11 @@ rules:
   - apiGroups: [core.orka.ai]
     resources: [agents, tools, skills, providers, runtimepools]
     verbs: [get, list, watch]
+  # Using an execution-workspace class is a permission of its own: admission
+  # checks that the caller may "use" the class a Task names.
+  - apiGroups: [workspace.orka.ai]
+    resources: [executionworkspaceclasses, executionworkspacecheckpoints]
+    verbs: [get, list, watch, use]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
