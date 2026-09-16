@@ -259,10 +259,6 @@ demo-images: ## Build + kind-load demo-only sandbox runtime image
 	docker build -t orka-sandbox-runtime:demo -f hack/demos/images/sandbox-runtime/Dockerfile .
 	kind load docker-image orka-sandbox-runtime:demo --name $${ORKA_DEMO_CLUSTER:-orka-demo}
 
-.PHONY: demo-test
-demo-test: ## Run hack/demos smoke tests (style helpers, profile dispatch, payoff cards)
-	bash hack/demos/lib/test/run-all.sh
-
 ##@ UI
 
 .PHONY: ui-install

@@ -241,21 +241,12 @@ make deploy \
 
 ### Demo cluster + recordings
 
-For interactive presentations and asciinema recordings of `hack/demos/`,
-a one-shot bootstrap is available:
-
-```bash
-make demo-cluster-up      # kind cluster + Orka + agent-sandbox
-make demo-images          # build + load demo runtime images
-hack/demos/00-preflight.sh
-# ... run ./hack/demos/10-chat-pr.sh, 20-..., etc.
-make demo-cluster-down
-```
-
-The scripts pace themselves via `DEMO_RECORD_PROFILE=presenter|docs|social|hero`
-and pick a short or long request body via
-`DEMO_REQUEST_PRESET=quiet-flag|readme-fix|vekil-metrics`. See
-`hack/demos/RECORDING.md` for the full design.
+The recorded demos live in `demo/`. Each `demo/NN-*/demo.sh` is a narrated
+scenario that `demo/record.sh` records with asciinema; `demo/setup/cluster-up.sh`
+builds the one kind cluster they run against (Orka, Agent Substrate on gVisor,
+Agent Sandbox, and a real model proxy) on top of the installers in
+`hack/demos/cluster/`. See `demo/README.md` for the scenarios, playback, and
+re-recording.
 
 ## Generate installer YAML
 

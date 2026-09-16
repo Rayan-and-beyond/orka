@@ -17,9 +17,14 @@ mkdir -p "$CLAUDE_CONFIG_DIR"
 # Provider serves, or those calls fail noisily in the controller log.
 printf '{"permissions":{"defaultMode":"bypassPermissions"},"env":{"ANTHROPIC_SMALL_FAST_MODEL":"copilot/claude-haiku-4.5"}}\n' >"$CLAUDE_CONFIG_DIR/settings.json"
 
-# Quiet reset so the recording always starts from the same place.
+# Quiet reset so the recording always starts from the same place. The demo
+# repository exists for these recordings, so open pull requests and orka/*
+# branches from earlier runs are cleared; the coordinator would otherwise
+# find a pull request that already implements the request.
 peq "kubectl -n $ORKA_NAMESPACE delete tasks -l orka.ai/source=anthropic-proxy --wait=false"
 peq "kubectl -n $ORKA_NAMESPACE delete agents -l orka.ai/created-by=chat --wait=false"
+peq "gh pr list --repo sozercan/orka-demo-inventory --state open --json number --jq '.[].number' | xargs -I{} gh pr close {} --repo sozercan/orka-demo-inventory"
+peq "gh api repos/sozercan/orka-demo-inventory/git/matching-refs/heads/orka/ --jq '.[].ref' | sed 's#^refs/##' | xargs -I{} gh api -X DELETE repos/sozercan/orka-demo-inventory/git/refs/{}"
 ensure_port_forward
 
 banner "Orka — from a chat message to a pull request" \
