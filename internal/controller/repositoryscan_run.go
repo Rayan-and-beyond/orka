@@ -61,11 +61,13 @@ func (r *RepositoryScanReconciler) reconcileScanRunIdentity(ctx context.Context,
 	return false, nil
 }
 
+const readyConditionType = "Ready"
+
 // readyCondition builds a "Ready" condition observed at generation with a
 // fresh transition time.
 func readyCondition(generation int64, status metav1.ConditionStatus, reason, message string) metav1.Condition {
 	return metav1.Condition{
-		Type:               "Ready",
+		Type:               readyConditionType,
 		Status:             status,
 		Reason:             reason,
 		Message:            message,

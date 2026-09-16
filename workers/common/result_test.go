@@ -169,7 +169,8 @@ func TestDoPostOnceWithClient_DrainsAndClosesSuccessBody(t *testing.T) {
 	})}
 
 	if err := doPostOnce(
-		context.Background(), client, "http://controller.invalid/result", []byte("result"), "", "application/octet-stream", nil,
+		context.Background(), client, "http://controller.invalid/result",
+		[]byte("result"), "", "application/octet-stream", nil,
 	); err != nil {
 		t.Fatalf("doPostOnce() error = %v", err)
 	}
@@ -223,7 +224,8 @@ func TestDoPostOnceWithClient_BoundsErrorBodyDrainAndCloses(t *testing.T) {
 	})}
 
 	err := doPostOnce(
-		context.Background(), client, "http://controller.invalid/result", []byte("result"), "", "application/octet-stream", nil,
+		context.Background(), client, "http://controller.invalid/result",
+		[]byte("result"), "", "application/octet-stream", nil,
 	)
 	if err == nil || !strings.Contains(err.Error(), "HTTP 503") {
 		t.Fatalf("doPostOnce() error = %v, want HTTP 503", err)
@@ -318,7 +320,8 @@ func TestSubmitResult_RejectsBlank(t *testing.T) {
 	t.Setenv("ORKA_RESULT_ENDPOINT", srv.URL)
 
 	for _, result := range [][]byte{nil, {}, []byte(" \n\t")} {
-		if err := SubmitResultContext(context.Background(), result); err == nil || !strings.Contains(err.Error(), "must not be blank") {
+		err := SubmitResultContext(context.Background(), result)
+		if err == nil || !strings.Contains(err.Error(), "must not be blank") {
 			t.Fatalf("SubmitResultContext(context.Background(), %q) error = %v, want blank result error", result, err)
 		}
 	}
