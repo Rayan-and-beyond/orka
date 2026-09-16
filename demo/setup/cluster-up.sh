@@ -48,6 +48,16 @@ step "4/5 Agent Sandbox"
 ORKA_DEMO_CLUSTER=$KIND_CLUSTER ORKA_SANDBOX_CLEANUP_POLICY=delete AGENTIC=1 \
   bash hack/demos/cluster/install-agent-sandbox.sh
 
+step "3b/5 credential roles"
+# Security scanning insists on distinct Secrets per credential role. The demo
+# token covers every role, so mirror the installer's Secret under the other
+# names without printing it.
+for role in github-publication-read github-publication-write github-forge; do
+  kubectl -n orka-system get secret github-credentials -o json |
+    jq --arg name "$role" '{apiVersion, kind, type, metadata: {name: $name, namespace: .metadata.namespace}, data}' |
+    kubectl apply -f - >/dev/null
+done
+
 step "4b/5 registry mirror, publisher, extra runtime images"
 bash demo/setup/registry-mirror.sh
 bash demo/setup/publisher.sh

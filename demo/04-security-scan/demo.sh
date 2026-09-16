@@ -20,7 +20,7 @@ chapter "Register the repository"
 
 say "nodejs-goof is a deliberately vulnerable todo app. We register it once;"
 say "Orka scans on demand or on a schedule, and keeps the results as records."
-pe "sed -n '6,20p' $here/manifests/repository-scan.yaml"
+pe "sed -n '6,30p' $here/manifests/repository-scan.yaml"
 pe "orka security repo create -f $here/manifests/repository-scan.yaml"
 pe "orka security repo list"
 
@@ -34,14 +34,15 @@ latest_scan() { orka security scan list "$repo" -o json | jq -r '.items | sort_b
 watch_tasks "[[ \$(latest_scan) =~ ^(succeeded|failed)$ ]]" 20 orka.ai/security-target=$repo
 [[ $(latest_scan) == succeeded ]] || { bad "the scan run failed"; exit 1; }
 pe "orka security scan list $repo -o json | jq '.items[0] | {phase,sliceCount,reviewedSliceCount,acceptedFindings,droppedFindings,summary}'"
-pe "orka security threat-model get $repo -o json | jq -r .content | head -n 20"
+pe "orka security threat-model get $repo -o json | jq -r .content | sed -n '1,14p' | cut -c1-96"
 
 chapter "Findings, with evidence"
 
 say "Every finding cites a file and line range inside the reviewed context."
 say "Ones Orka could validate rank above the rest."
-pe "orka security finding list $repo --recommended"
-finding=$(orka security finding list "$repo" --recommended -o json | jq -r '.items[0].id // empty')
+pe "orka security finding list $repo --recommended -o json | jq -r '.items[] | [.severity, .validationStatus, .id, .title] | @tsv' | cut -c1-96 | sed -n '1,12p'"
+say "Validated means Orka reproduced it in an isolated worker, not just read it."
+finding=$(orka security finding list "$repo" --recommended -o json | jq -r '[.items[] | select(.validationStatus == "validated")][0].id // .items[0].id // empty')
 [[ -n $finding && $finding != null ]] || { bad "no recommended finding"; exit 1; }
 pe "orka security finding get $finding -o json | jq '{title,severity,category,validationStatus,filePath,line,summary}'"
 

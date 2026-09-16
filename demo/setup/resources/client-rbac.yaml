@@ -27,7 +27,7 @@ rules:
   # caller may read it. Grant this one Secret by name; nothing else.
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [github-credentials]
+    resourceNames: [github-credentials, github-publication-read, github-publication-write, github-forge]
     verbs: [get]
   # Chat, and the OpenAI- and Anthropic-compatible endpoints, are "chats".
   - apiGroups: [core.orka.ai]

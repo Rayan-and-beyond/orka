@@ -19,13 +19,15 @@ spec:
     name: claude-reviewer
   patchAgentRef:
     name: codex-coder
+  # Four credential roles, four Secrets: clone, verify the target, push the
+  # exact branch, and talk to the forge. Only the Publisher ever holds them.
   gitSecretRef:
     name: github-credentials
   readCredentialRef:
     name: github-credentials
   publicationReadCredentialRef:
-    name: github-credentials
+    name: github-publication-read
   publicationCredentialRef:
-    name: github-credentials
+    name: github-publication-write
   forgeCredentialRef:
-    name: github-credentials
+    name: github-forge

@@ -69,7 +69,7 @@ pe "kubectl -n $runtime_ns get pod $pod -o jsonpath='{.spec.volumes[*].secret.se
 pe "kubectl -n $runtime_ns exec $pod -- env | grep -E '^(GH_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY)=' || echo 'no provider or Git credential in the environment'"
 say "Now the agent works. Orka records what it does as execution events."
 wait_task inventory-implement 1800
-pe "orka task events inventory-implement | awk 'NR>1 {print \$2}' | sort | uniq -c | sort -rn | head -n 6"
+pe "orka task events inventory-implement | awk 'NR>1 {print \$2}' | sort | uniq -c | sort -rn | sed -n '1,6p'"
 pe "orka task events inventory-implement | grep ModelMessage | tail -n 2 | cut -c1-300"
 pe "orka task result inventory-implement | tail -n 20"
 say "The agent never pushed. Orka's Publisher verified the tree, published the"
