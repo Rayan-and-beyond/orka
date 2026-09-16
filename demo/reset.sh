@@ -68,6 +68,7 @@ reset_03() {
 }
 reset_04() {
   kubectl -n "$ns" delete repositoryscans -l demo.orka.ai/name=04-security-scan --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  kubectl -n "$ns" delete tasks -l orka.ai/security-target=nodejs-goof --ignore-not-found --wait=false >/dev/null 2>&1 || true
 }
 
 case ${1:-all} in

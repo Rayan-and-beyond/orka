@@ -37,8 +37,10 @@ for name in $demos; do
   cast=demo/casts/$name.cast
   title=$(sed -n '2s/^# //p' "$script")
 
+  # Every recording starts from a cluster with no other demo's Tasks in it,
+  # so a plain `orka task list` shows only what this scenario created.
   echo "==> resetting demo objects"
-  ./demo/reset.sh "$name"
+  ./demo/reset.sh all
 
   echo "==> recording $name"
   # --return propagates the script's exit status. Without it asciinema exits 0
