@@ -48,6 +48,11 @@ step "4/5 Agent Sandbox"
 ORKA_DEMO_CLUSTER=$KIND_CLUSTER ORKA_SANDBOX_CLEANUP_POLICY=delete AGENTIC=1 \
   bash hack/demos/cluster/install-agent-sandbox.sh
 
+step "4b/5 registry mirror, publisher, extra runtime images"
+bash demo/setup/registry-mirror.sh
+bash demo/setup/publisher.sh
+bash demo/setup/acp-runtime-images.sh claude
+
 step "5/5 demo resources"
 kubectl apply -f demo/setup/resources/client-rbac.yaml
 kubectl apply -f demo/setup/resources/agents.yaml

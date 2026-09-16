@@ -43,3 +43,11 @@ make kustomize >/dev/null
 bin/kustomize build "$tmp/config/demo-publisher" | kubectl apply -f -
 kubectl -n orka-system rollout status deployment/orka-scm-egress-proxy --timeout=3m
 kubectl -n orka-system rollout status deployment/orka-workspace-publisher --timeout=3m
+
+# The conformance installer renders the manager container without the
+# Publisher URL (it never publishes). Without it every repository Task fails
+# closed with "clean-room Workspace/Publisher and artifact authorization are
+# required". The token and capability mounts are already present.
+kubectl -n orka-system set env deployment/orka-controller-manager -c manager \
+  ORKA_WORKSPACE_PUBLISHER_URL=http://orka-workspace-publisher.orka-system.svc:8080
+kubectl -n orka-system rollout status deployment/orka-controller-manager --timeout=5m
