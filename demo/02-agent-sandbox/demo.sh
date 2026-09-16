@@ -59,7 +59,7 @@ say "runtime pool to a Sandbox."
 wait_for "the Sandbox to exist" "[[ -n \$(sandbox_name) ]]" 300
 sb=$(sandbox_name)
 wait_for "the Sandbox Pod" "kubectl -n $runtime_ns get pods --no-headers 2>/dev/null | grep sandbox-claim | grep -q Running" 300
-pe "kubectl -n $runtime_ns get sandboxes -o custom-columns=NAME:.metadata.name,MODE:.spec.operatingMode,READY:.status.conditions[?\(@.type==\"Ready\"\)].status"
+pe "kubectl -n $runtime_ns get sandboxclaims,sandboxes"
 pod=$(kubectl -n "$runtime_ns" get pods -o name | grep sandbox-claim | head -n1 | cut -d/ -f2)
 pe "kubectl -n $runtime_ns get pod $pod"
 sb_uid=$(kubectl -n "$runtime_ns" get sandboxes.agents.x-k8s.io "$sb" -o jsonpath='{.metadata.uid}')
