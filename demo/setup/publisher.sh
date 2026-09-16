@@ -44,6 +44,16 @@ bin/kustomize build "$tmp/config/demo-publisher" | kubectl apply -f -
 kubectl -n orka-system rollout status deployment/orka-scm-egress-proxy --timeout=3m
 kubectl -n orka-system rollout status deployment/orka-workspace-publisher --timeout=3m
 
+# The conformance installer mints a 31-byte artifact capability secret, one
+# short of the 32 bytes the Publisher path requires; regenerate it. Session
+# bootstrap material is re-derived, so this is safe while no Task is running.
+umask 077
+capability=$(mktemp)
+openssl rand -hex 32 | tr -d '\n' >"$capability"
+kubectl -n orka-system create secret generic acp-artifact-capability \
+  --from-file=capability-secret="$capability" --dry-run=client -o yaml | kubectl apply -f -
+rm -f "$capability"
+
 # The conformance installer renders the manager container without the
 # Publisher URL (it never publishes). Without it every repository Task fails
 # closed with "clean-room Workspace/Publisher and artifact authorization are
