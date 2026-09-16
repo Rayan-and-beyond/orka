@@ -9,12 +9,13 @@ runtime_ns=${ORKA_RUNTIME_NAMESPACE:-orka-runtimes}
 branch=orka/healthz-from-sandbox
 export runtime_ns
 
+ensure_port_forward
+orka_connect
+peq "orka session delete inventory-sandbox"
 peq "kubectl -n $ORKA_NAMESPACE delete tasks -l demo.orka.ai/name=02-agent-sandbox --wait=true"
 peq "kubectl -n $ORKA_NAMESPACE delete executionworkspaces -l demo.orka.ai/name=02-agent-sandbox --wait=true"
 peq "gh pr list --repo sozercan/orka-demo-inventory --head $branch --json number --jq '.[].number' | xargs -I{} gh pr close {} --repo sozercan/orka-demo-inventory --delete-branch"
 peq "git ls-remote --exit-code $DEMO_REPO refs/heads/$branch && git push $DEMO_REPO --delete $branch"
-ensure_port_forward
-orka_connect
 
 workspace_of() {
   kubectl -n "$ORKA_NAMESPACE" get task "$1" \
@@ -52,10 +53,11 @@ sb=$(sandbox_name)
 wait_for "the Sandbox Pod" "kubectl -n $runtime_ns get pods --no-headers 2>/dev/null | grep -q Running" 300
 pe "kubectl -n $runtime_ns get sandboxclaims,sandboxes,pods"
 sb_uid=$(kubectl -n "$runtime_ns" get sandboxes.agents.x-k8s.io "$sb" -o jsonpath='{.metadata.uid}')
-pod=$(kubectl -n "$runtime_ns" get pods -o jsonpath='{.items[0].metadata.name}')
+pod=$(kubectl -n "$runtime_ns" get pods -o name | grep sandbox-claim | head -n1 | cut -d/ -f2)
 say "The Sandbox Pod holds the agent runtime and nothing else. No Git token,"
 say "no model key: the provider proxy and the Publisher hold those."
-pe "kubectl -n $runtime_ns exec $pod -- env | grep -ciE 'token|api_key|secret' || echo 'no credentials in the environment'"
+pe "kubectl -n $runtime_ns get pod $pod -o jsonpath='{.spec.volumes[*].secret.secretName}' | wc -w"
+pe "kubectl -n $runtime_ns exec $pod -- env | grep -E '^(GH_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY)=' || echo 'no provider or Git credential in the environment'"
 say "Now the agent works. Orka records what it does as execution events."
 wait_task inventory-implement 1800
 pe "orka task events inventory-implement | grep -E 'ToolCall|AgentRuntime|Workspace' | tail -n 8"
@@ -81,9 +83,9 @@ ok "No agent Pod is running. The volume with the working tree is Bound and waiti
 
 chapter "Turn 2 — same Session, same disk"
 
-say "A second Task in the same Session. Read intent this time: if the tree"
-say "changes, Orka fails the turn. A verification pass, in the same Sandbox."
-pe "sed -n '13,32p' $here/manifests/turn-2-verify.yaml"
+say "A second Task in the same Session: a verification pass in the same"
+say "Sandbox. The prompt only reads; an unchanged tree publishes nothing."
+pe "sed -n '14,24p' $here/manifests/turn-2-verify.yaml"
 pe "orka task create -f $here/manifests/turn-2-verify.yaml"
 wait_for "the Sandbox to wake" "[[ \$(sandbox_mode $sb) == Running ]]" 600
 pe "kubectl -n $runtime_ns get sandbox $sb -o custom-columns=NAME:.metadata.name,MODE:.spec.operatingMode,UID:.metadata.uid"
@@ -93,7 +95,7 @@ ok "Same Sandbox, same UID as turn 1. It cold-started from the kept volume."
 wait_task inventory-verify 1200
 pe "orka task result inventory-verify"
 pe "orka task status inventory-verify | grep -E 'Delivery|Phase'"
-ok "The implementation from turn 1 was still on disk. Nothing was re-cloned, nothing was pushed."
+ok "The implementation from turn 1 was still on disk. Nothing was re-cloned, nothing new was pushed."
 
 chapter "Delete the workspace"
 

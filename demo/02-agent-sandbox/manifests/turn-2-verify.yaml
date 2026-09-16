@@ -1,6 +1,7 @@
 # Turn 2: the same Session, so the same suspended Sandbox wakes up with the
-# implementation still on disk. Read intent: Orka refuses the turn if the
-# repository tree changes, which is the point of a verification pass.
+# implementation still on disk. A Session keeps one runtime profile, so this
+# turn carries the same write-intent publication settings; the prompt asks
+# for verification only, and an unchanged tree publishes nothing.
 apiVersion: core.orka.ai/v1alpha1
 kind: Task
 metadata:
@@ -20,11 +21,21 @@ spec:
         name: sandbox-session
       reusePolicy: session
   workspace:
-    intent: read
+    intent: write
     gitRepo: https://github.com/sozercan/orka-demo-inventory
     branch: main
     readCredentialRef:
       name: github-credentials
+    publicationGitRepo: https://github.com/sozercan/orka-demo-inventory
+    publicationReadCredentialRef:
+      name: github-credentials
+    publicationCredentialRef:
+      name: github-credentials
+    forgeCredentialRef:
+      name: github-credentials
+    pushBranch: orka/healthz-from-sandbox
+    prBaseBranch: main
+    createPR: true
   timeout: 20m
   prompt: |
     Do not change any file. Run: ls; grep -n healthz main.go README.md;

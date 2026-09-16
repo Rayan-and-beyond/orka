@@ -16,6 +16,12 @@ rules:
   - apiGroups: [core.orka.ai]
     resources: [tasks, repositorymonitors, repositoryscans]
     verbs: [get, list, watch, create, update, patch, delete]
+  # Sessions are store-backed, not CRDs; the API still authorizes them
+  # against this virtual resource. Deleting a Session archives it and lets
+  # the Tasks bound to it finish their own deletion.
+  - apiGroups: [core.orka.ai]
+    resources: [sessions]
+    verbs: [get, list, delete]
   - apiGroups: [core.orka.ai]
     resources: [agents, tools, skills, providers, runtimepools]
     verbs: [get, list, watch]

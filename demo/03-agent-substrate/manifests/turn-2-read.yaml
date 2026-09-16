@@ -1,5 +1,7 @@
 # Turn 2: same Session. A fresh Actor boots from the kept data; AUDIT.md is
-# still on disk even though the process that wrote it no longer exists.
+# still on disk even though the process that wrote it no longer exists. A
+# Session keeps one runtime profile, so the turn carries the same publication
+# settings; the prompt only reads, and an unchanged tree publishes nothing.
 apiVersion: core.orka.ai/v1alpha1
 kind: Task
 metadata:
@@ -19,11 +21,17 @@ spec:
         name: substrate-session
       reusePolicy: session
   workspace:
-    intent: read
+    intent: write
     gitRepo: https://github.com/sozercan/orka-demo-inventory
     branch: main
     readCredentialRef:
       name: github-credentials
+    publicationGitRepo: https://github.com/sozercan/orka-demo-inventory
+    publicationReadCredentialRef:
+      name: github-credentials
+    publicationCredentialRef:
+      name: github-credentials
+    pushBranch: orka/security-audit
   timeout: 20m
   prompt: |
     Do not change any file. Run: pwd; ls; cat AUDIT.md. Reply with the exact

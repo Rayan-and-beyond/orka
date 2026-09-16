@@ -21,12 +21,13 @@ kubectl() {
 }
 
 branch=orka/security-audit
+ensure_port_forward
+orka_connect
+peq "orka session delete inventory-audit"
 peq "kubectl -n $ORKA_NAMESPACE delete tasks -l demo.orka.ai/name=03-agent-substrate --wait=true"
 peq "git ls-remote --exit-code $DEMO_REPO refs/heads/$branch && git push $DEMO_REPO --delete $branch"
 peq "kubectl -n $ORKA_NAMESPACE delete executionworkspacecheckpoints -l demo.orka.ai/name=03-agent-substrate --wait=true"
 peq "kubectl -n $ORKA_NAMESPACE delete executionworkspaces -l demo.orka.ai/name=03-agent-substrate --wait=true"
-ensure_port_forward
-orka_connect
 
 workspace_of() {
   kubectl -n "$ORKA_NAMESPACE" get task "$1" \
