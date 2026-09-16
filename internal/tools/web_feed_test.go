@@ -122,7 +122,7 @@ func TestWebFetchFeedRSS(t *testing.T) {
 		"[Science 🚀 &amp; cafés](<https://news.example.test/story?q=1&amp;x=2>)",
 		"Published: Mon, 01 Jan 2024 09:30:00 -0500", "Feed summary: A brief &amp; useful é summary.",
 		"[No date](<http://feeds.example.test/other>)\nPublished: not provided")
-	assertWebFeedExcludes(t, result.Content, "secretScript", "secretStyle", "<p>", "CDATA", "full article", "NOT A PUBLICATION DATE")
+	assertWebFeedExcludes(t, result.Content, "secretScript", "secretStyle", "<p>", "CDATA", "Do not claim this is the full article.", "NOT A PUBLICATION DATE")
 }
 
 func TestWebFetchFeedAtom(t *testing.T) {
@@ -500,5 +500,32 @@ func TestWebFetchBodyOverflowReportsOmissionAfterHTMLExtraction(t *testing.T) {
 	result, _ := executeWebFeed(t, tool, WebFetchArgs{URL: base})
 	if result.Content != "Visible" || result.Extractor != "html_text" || !result.Truncated {
 		t.Fatalf("physical response truncation was not reported: %+v", result)
+	}
+}
+
+func TestWebFeedLabelsCoverageAndPerItemPublicationEvidence(t *testing.T) {
+	tool, base := serveWebFeed(t, `<rss version="2.0"><channel><title>Daily feed</title>
+<pubDate>Wed, 16 Sep 2026 01:00:00 +0000</pubDate>
+<item><title>Earlier item</title><link>https://news.example.org/earlier</link><pubDate>Mon, 14 Sep 2026 20:00:00 -0400</pubDate><description>Earlier synopsis.</description></item>
+<item><title>Later item</title><link>https://news.example.org/later</link><pubDate>Tue, 15 Sep 2026 20:00:00 -0400</pubDate><description>Later synopsis.</description></item>
+</channel></rss>`, "application/rss+xml")
+	result, _ := executeWebFeed(t, tool, WebFetchArgs{URL: base + "/news.xml"})
+	if result.Extractor != "rss_feed" || result.Truncated {
+		t.Fatalf("feed metadata = %#v", result)
+	}
+	assertWebFeedContains(t, result.Content,
+		"Coverage: feed entries and their summaries, not full article text or every article on the site.",
+		"citations and publication-date filtering",
+		"Feed published: Wed, 16 Sep 2026 01:00:00 +0000",
+		"Published: Mon, 14 Sep 2026 20:00:00 -0400",
+		"Published: Tue, 15 Sep 2026 20:00:00 -0400",
+		"[Earlier item](<https://news.example.org/earlier>)",
+		"[Later item](<https://news.example.org/later>)",
+	)
+	if strings.Index(result.Content, "Coverage:") > strings.Index(result.Content, "Daily feed") {
+		t.Fatal("source-controlled text preceded the tool's coverage metadata")
+	}
+	if !strings.Contains(tool.Description(), "RSS/Atom") || !strings.Contains(tool.Description(), "Published") {
+		t.Fatal("model-facing tool metadata omits the feed/date contract")
 	}
 }

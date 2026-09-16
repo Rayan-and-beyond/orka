@@ -410,6 +410,12 @@ func codexSessionProjection(
 		return ProviderSessionProjection{}, fmt.Errorf("codex ACP runtime cannot exactly enforce provider-native tool restrictions")
 	}
 	config := codexBaseConfig(model, proxy.BaseURL)
+	if !policy.unrestricted && !policy.allows(providerToolWebSearch) {
+		// The read-only native grant excludes Codex's hosted web tool. Keep
+		// research on explicitly authorized Orka MCP tools instead of silently
+		// offering an ungranted native search/fetch fallback.
+		config["web_search"] = "disabled"
+	}
 	if systemPrompt := request.AgentConfiguration.SystemPrompt; systemPrompt != "" {
 		config["developer_instructions"] = systemPrompt
 	}

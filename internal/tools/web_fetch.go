@@ -111,7 +111,7 @@ func (t *WebFetchTool) Name() string {
 
 // Description returns the tool description
 func (t *WebFetchTool) Description() string {
-	return "Fetch and extract content from a URL. Returns extracted text from HTML pages, pretty-printed JSON, or raw content."
+	return "Fetch and extract content from a URL: readable HTML, JSON, or RSS/Atom feed entries with publication dates and source links. Feed entries are summaries, not full articles. When summarizing them, include each item’s source link. For date-specific requests compare each item’s Published timestamp in the requested timezone; feed-level and retrieval dates do not establish an item’s publication date."
 }
 
 // Parameters returns the JSON Schema for parameters

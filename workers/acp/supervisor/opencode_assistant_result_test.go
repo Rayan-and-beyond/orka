@@ -261,6 +261,37 @@ func TestSupervisorOpenCodeAssistantResultReusedIDsAcrossPromptsHTTP(t *testing.
 	assertAssistantResultVisibleStream(t, events, secondChunks)
 }
 
+func TestSupervisorClaudeSelectsIdentifiedFinalAnswerHTTP(t *testing.T) {
+	fixture := newAssistantResultHTTPFixture(t, providerKindClaude)
+	chunks := []assistantResultTestChunk{
+		{MessageID: "msg-progress", Text: "I will look this up. "},
+		{MessageID: "msg-answer", Text: "[Verified source](https://example.com/article)."},
+		{MessageID: "msg-progress", Text: "Late progress."},
+	}
+	_, events, _ := fixture.prompt(t, "prompt-1", chunks)
+	assertAssistantResultCompleted(t, assistantResultTerminal(t, events), "[Verified source](https://example.com/article).")
+	assertAssistantResultVisibleStream(t, events, chunks)
+}
+
+func TestSupervisorClaudeAnonymousNoticesPreserveTranscriptHTTP(t *testing.T) {
+	for i, chunks := range [][]assistantResultTestChunk{
+		{{MessageID: "progress", Text: "Progress. "}, {Text: "Compacting... "}, {MessageID: "final", Text: "Final."}},
+		{{MessageID: "final", Text: "Final. "}, {Text: "Hook notice."}},
+		{{Text: "SDK notice. "}, {MessageID: "final", Text: "Final."}},
+	} {
+		t.Run(fmt.Sprintf("notice-%d", i), func(t *testing.T) {
+			fixture := newAssistantResultHTTPFixture(t, providerKindClaude)
+			_, events, _ := fixture.prompt(t, "prompt-1", chunks)
+			var want strings.Builder
+			for _, chunk := range chunks {
+				want.WriteString(chunk.Text)
+			}
+			assertAssistantResultCompleted(t, assistantResultTerminal(t, events), want.String())
+			assertAssistantResultVisibleStream(t, events, chunks)
+		})
+	}
+}
+
 func TestSupervisorOtherProvidersKeepAssistantResultBehaviorHTTP(t *testing.T) {
 	for _, test := range []struct {
 		name, provider, want string
@@ -272,7 +303,7 @@ func TestSupervisorOtherProvidersKeepAssistantResultBehaviorHTTP(t *testing.T) {
 			want:   "Progress. Answer.",
 		},
 		{
-			name: "claude_named_messages_still_concatenate", provider: providerKindClaude,
+			name: "copilot_named_messages_still_concatenate", provider: providerKindCopilot,
 			chunks: []assistantResultTestChunk{{MessageID: "old", Text: "Progress. "}, {MessageID: "new", Text: "Answer."}},
 			want:   "Progress. Answer.",
 		},
@@ -759,6 +790,15 @@ func TestSupervisorAssistantResultACPHelper(t *testing.T) {
 }
 
 func TestSupervisorOpenCodeAssistantResultMalformedUnicodeHTTP(t *testing.T) {
+	testSupervisorAssistantResultMalformedUnicodeHTTP(t, providerKindOpencode)
+}
+
+func TestSupervisorClaudeAssistantResultMalformedUnicodeHTTP(t *testing.T) {
+	testSupervisorAssistantResultMalformedUnicodeHTTP(t, providerKindClaude)
+}
+
+func testSupervisorAssistantResultMalformedUnicodeHTTP(t *testing.T, provider string) {
+	t.Helper()
 	for _, test := range []struct {
 		name string
 		raw  []byte
@@ -774,7 +814,7 @@ func TestSupervisorOpenCodeAssistantResultMalformedUnicodeHTTP(t *testing.T) {
 	} {
 		for _, thought := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/thought=%t", test.name, thought), func(t *testing.T) {
-				fixture := newAssistantResultHTTPFixture(t, providerKindOpencode)
+				fixture := newAssistantResultHTTPFixture(t, provider)
 				chunks := []assistantResultTestChunk{{MessageID: "earlier", Text: "Earlier message."}, {RawMessageID: test.raw, Text: "Malformed identity candidate.", Thought: thought}}
 				request, raw := fixture.startPrompt(t, "prompt-1", chunks)
 				fixture.assertRejectedStreamAndReplay(t, request, raw, chunks)

@@ -294,7 +294,7 @@ func (s *Server) handleStartPrompt(w http.ResponseWriter, r *http.Request) {
 	}
 	mapAndEncode(first)
 	compactor := newAssistantMessageCompactor()
-	compactor.validateOpenCodeIdentity = state.profile.ProviderKind == providerKindOpencode
+	compactor.validateAssistantIdentity = usesNativeAssistantMessageIdentity(state.profile.ProviderKind)
 	defer compactor.close()
 	events := run.Events
 	for events != nil {
@@ -2131,7 +2131,11 @@ func (s *Server) mapRuntimeEvent(state *sessionState, prompt *promptState, event
 		state.descriptor.LastTransitionAt = event.Timestamp
 		return &harnessv2.Event{Protocol: harnessv2.ProtocolVersion, Type: harnessv2.EventAccepted, Identity: identity, Accepted: &harnessv2.AcceptedEvent{AcceptedAt: event.Timestamp, Lease: prompt.lease, ACPVersion: harnessv2.ACPProfileV1}}, nil
 	case acp.PromptEventUpdate:
-		if err := prompt.rememberToolCallName(event.Update); err != nil {
+		var toolPolicy *harnessv2.MCPToolPolicy
+		if state.mcpProxy != nil {
+			toolPolicy = &state.mcpProxy.configuration.ToolPolicy
+		}
+		if err := prompt.rememberToolCallName(event.Update, state.profile.ProviderKind, toolPolicy); err != nil {
 			return nil, err
 		}
 		update, text, ok, err := mapACPUpdate(event.Update)
@@ -2140,14 +2144,19 @@ func (s *Server) mapRuntimeEvent(state *sessionState, prompt *promptState, event
 			return nil, err
 		}
 		limit := s.cfg.Capabilities.Limits.MaxTerminalResultBytes
-		if state.profile.ProviderKind == providerKindOpencode {
-			messageID, assistant, identityErr := openCodeAssistantMessageIdentity(event.Update)
+		if usesNativeAssistantMessageIdentity(state.profile.ProviderKind) {
+			messageID, assistant, identityErr := nativeAssistantMessageIdentity(event.Update)
 			if identityErr != nil {
 				prompt.sequence--
-				return nil, prompt.openCodeAssistantResult.invalidate(identityErr)
+				return nil, prompt.namedAssistantResult.invalidate(identityErr)
 			}
-			if assistant {
-				if err := prompt.openCodeAssistantResult.append(messageID, text, limit); err != nil {
+			if assistant && state.profile.ProviderKind == providerKindClaude && messageID == "" {
+				// Claude's SDK also emits anonymous status/hook notices. Without
+				// structured identity, retain the complete legacy text rather than
+				// hide a notice or guess its meaning from wording.
+				prompt.assistantIdentityFallback = true
+			} else if assistant {
+				if err := prompt.namedAssistantResult.append(messageID, text, limit); err != nil {
 					prompt.sequence--
 					return nil, err
 				}
@@ -2173,14 +2182,29 @@ func (s *Server) mapRuntimeEvent(state *sessionState, prompt *promptState, event
 		if err != nil {
 			return nil, err
 		}
-		if name, known := prompt.toolCallNames[permission.ToolCallID]; known {
+		name, known := prompt.toolCallNames[permission.ToolCallID]
+		if known {
 			if permission.ToolName != "" && permission.ToolName != name {
 				return nil, fmt.Errorf("ACP permission does not match the recorded tool identity")
 			}
 			permission.ToolName = name
 		}
 		if state.mcpProxy != nil {
-			permission.ToolName = canonicalPermissionToolName(state.profile.ProviderKind, state.mcpProxy.configuration.ToolPolicy, permission.ToolName)
+			toolPolicy := state.mcpProxy.configuration.ToolPolicy
+			permission.ToolName = canonicalPermissionToolName(state.profile.ProviderKind, toolPolicy, permission.ToolName)
+			if state.profile.ProviderKind == providerKindCodex {
+				descriptor, allowed := toolPolicy.Descriptor(permission.ToolName)
+				brokered := allowed && descriptor.Source.Brokered()
+				mcpApproval, _ := event.Permission.Request.Meta["is_mcp_tool_approval"].(bool)
+				// A command/file/network elevation cannot borrow an earlier MCP
+				// call ID. Conversely, MCP approval cannot authorize a native tool.
+				if brokered && (!known || !mcpApproval) {
+					return nil, fmt.Errorf("codex MCP permission lacks correlated tool approval identity")
+				}
+				if mcpApproval && !brokered {
+					permission.ToolName = ""
+				}
+			}
 		}
 		if prompt.permissionRequestIDs == nil {
 			prompt.permissionRequestIDs = make(map[harnessv2.PermissionRequestID]struct{})
@@ -2256,7 +2280,7 @@ func (s *Server) terminalEvent(
 		}
 		return event, effective, nil
 	}
-	validationFailure := prompt.openCodeAssistantResult.failure
+	validationFailure := prompt.namedAssistantResult.failure
 	if validationFailure == nil && prompt.eventValidationFailed {
 		validationFailure = errors.New("ACP prompt event validation failed")
 	}
@@ -2362,8 +2386,8 @@ func (p *promptState) appendAssistantText(text, phase string, limit int) {
 }
 
 func (p *promptState) terminalResultText() (string, bool) {
-	if p.openCodeAssistantResult.messageID != "" {
-		return p.openCodeAssistantResult.text.String(), p.openCodeAssistantResult.overflow
+	if p.namedAssistantResult.messageID != "" && !p.assistantIdentityFallback {
+		return p.namedAssistantResult.text.String(), p.namedAssistantResult.overflow
 	}
 	if p.finalAnswerSeen {
 		return p.finalAnswer.String(), p.finalAnswerOverflow

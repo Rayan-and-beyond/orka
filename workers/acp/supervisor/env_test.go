@@ -148,6 +148,13 @@ func TestCodexProviderSessionProjectionReadOnlySurface(t *testing.T) {
 	if environment["INITIAL_AGENT_MODE"] != codexAgentModeOrkaExternal {
 		t.Fatalf("INITIAL_AGENT_MODE = %q, want orka-external", environment["INITIAL_AGENT_MODE"])
 	}
+	var config map[string]any
+	if err := json.Unmarshal([]byte(environment["CODEX_CONFIG"]), &config); err != nil {
+		t.Fatal(err)
+	}
+	if config["web_search"] != "disabled" {
+		t.Fatal("read-only Codex session retained an ungranted native web tool")
+	}
 	if !strings.Contains(environment["CODEX_CONFIG"], proxy.BaseURL) || environment["CODEX_API_KEY"] != proxy.Credential {
 		t.Fatalf("unexpected Codex environment: %#v", environment)
 	}

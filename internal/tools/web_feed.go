@@ -479,6 +479,8 @@ func (feed *webFeed) render(retrievedAt time.Time) string {
 	if feed.omitted > 0 {
 		fmt.Fprintf(&out, "Items omitted: %d (feed item limit: %d).\n", feed.omitted, maxFeedItems)
 	}
+	out.WriteString("Coverage: feed entries and their summaries, not full article text or every article on the site.\n")
+	out.WriteString("Item source links and Published timestamps below are the evidence for citations and publication-date filtering; feed/retrieval dates are not item publication dates.\n")
 	fmt.Fprintf(&out, "%s feed", feed.kind)
 	if feed.fields.title != "" {
 		fmt.Fprintf(&out, ": %s", feed.fields.title)
