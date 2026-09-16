@@ -83,7 +83,7 @@ fi
 vekil_url="http://vekil.${vekil_ns}.svc.cluster.local:1337/v1"
 
 log "Ensuring namespace ${demo_namespace}"
-kubectl create namespace "${demo_namespace}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl get namespace "${demo_namespace}" >/dev/null 2>&1 || kubectl create namespace "${demo_namespace}" >/dev/null
 
 # --- Provider api-key Secret (placeholder; vekil holds the real session) ----
 log "Creating provider api-key Secret ${demo_namespace}/${provider_secret}"

@@ -146,7 +146,7 @@ kubectl apply -f "https://github.com/kubernetes-sigs/agent-sandbox/releases/down
 cleanup_agent_sandbox_v05_webhook_resources
 
 log "Ensuring namespace ${demo_namespace}"
-kubectl create namespace "${demo_namespace}" --dry-run=client -o yaml | kubectl apply -f -
+kubectl get namespace "${demo_namespace}" >/dev/null 2>&1 || kubectl create namespace "${demo_namespace}"
 
 log "Applying orka-live SandboxTemplate (runtime image: ${runtime_image})"
 sed "s|REPLACE_RUNTIME_IMAGE|${runtime_image}|g; s|namespace: demo-magic|namespace: ${demo_namespace}|" \
