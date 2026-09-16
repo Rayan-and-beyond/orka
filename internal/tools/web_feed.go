@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	nethtml "golang.org/x/net/html"
 	"golang.org/x/net/idna"
 	"golang.org/x/text/encoding/ianaindex"
 
@@ -440,10 +441,48 @@ var webFeedMarkdownEscaper = strings.NewReplacer(
 )
 
 func webFeedText(value string) string {
-	// XML has already decoded XML entities/CDATA. Decode HTML entities before
-	// the existing script/style/tag stripping so encoded markup stays inert.
-	text := extractText([]byte(html.UnescapeString(value)))
-	return webFeedLiteralText(text)
+	// Retain the existing HTML entity normalization for HTML-style summaries,
+	// but recognize actual tokens instead of treating every <...> as a tag.
+	// Literal comparisons remain text; attributes and script/style bodies do not.
+	tokenizer := nethtml.NewTokenizer(strings.NewReader(html.UnescapeString(value)))
+	var text strings.Builder
+	var ignoredTag string
+	for {
+		switch tokenizer.Next() {
+		case nethtml.ErrorToken:
+			// The bounded string reader cannot fail. At EOF, a comparison
+			// such as x<y may remain as an unfinished tag in Raw, not Text.
+			// Preserve that tail unless it belongs to a script/style body.
+			if ignoredTag == "" {
+				text.WriteString(html.UnescapeString(string(tokenizer.Raw())))
+			}
+			return webFeedLiteralText(text.String())
+		case nethtml.TextToken:
+			if ignoredTag == "" {
+				text.Write(tokenizer.Text())
+			}
+		case nethtml.StartTagToken, nethtml.SelfClosingTagToken:
+			name, _ := tokenizer.TagName()
+			if ignoredTag == "" {
+				if string(name) == "script" || string(name) == "style" {
+					ignoredTag = string(name)
+				}
+				text.WriteByte(' ')
+			}
+		case nethtml.EndTagToken:
+			name, _ := tokenizer.TagName()
+			if string(name) == ignoredTag {
+				ignoredTag = ""
+			}
+			if ignoredTag == "" {
+				text.WriteByte(' ')
+			}
+		case nethtml.CommentToken, nethtml.DoctypeToken:
+			if ignoredTag == "" {
+				text.WriteByte(' ')
+			}
+		}
+	}
 }
 
 // Read XHTML nodes before decoding/escaping their character data. An escaped

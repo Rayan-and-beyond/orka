@@ -147,3 +147,33 @@ func TestWebFetchAtomXHTMLPreservesEscapedText(t *testing.T) {
 	assertWebFeedContains(t, result.Content, "Atom feed: 1 &lt; 2 &gt; 0", "Literal &lt;b&gt;tag&lt;/b&gt; &amp;lt;word&amp;gt;", "Feed summary: 1 &lt; 2 &gt; 0 Literal &lt;script&gt;text\\(\\)&lt;/script&gt;")
 	assertWebFeedExcludes(t, result.Content, "hiddenExecutable", "hiddenStyle", "<div", "<script>", "<![CDATA[")
 }
+
+func TestWebFetchFeedHTMLPreservesLiteralComparisons(t *testing.T) {
+	for _, test := range []struct{ name, text, want string }{
+		{"XML escaped", `1 &lt; 2 &gt; 0`, `1 &lt; 2 &gt; 0`},
+		{"CDATA", `<![CDATA[1 < 2 > 0]]>`, `1 &lt; 2 &gt; 0`},
+		{"identifier comparison tail", `x&amp;lt;y`, `x&lt;y`},
+		{"CDATA identifier tail", `<![CDATA[x<y]]>`, `x&lt;y`},
+		{"incomplete end tag", `<![CDATA[x</y]]>`, `x&lt;/y`},
+		{"unclosed script body", `<![CDATA[1 < 2 > 0<script>hiddenExecutable()]]>`, `1 &lt; 2 &gt; 0`},
+		{"operators", `<![CDATA[1<2>0 / 2 <= 3 >= 1]]>`, `1&lt;2&gt;0 / 2 &lt;= 3 &gt;= 1`},
+		{"HTML with quoted delimiter", `<![CDATA[<p title="attribute > not summary">Before <b>1 < 2 > 0</b> after.</p>]]>`, `Before 1 &lt; 2 &gt; 0 after.`},
+		{"HTML suppression", `<![CDATA[<SCRIPT data-label=">">hiddenExecutable()</SCRIPT><p>1 < 2 > 0</p><STYLE>hiddenStyle{}</STYLE><!-- hiddenComment -->&lt;script&gt;encodedHidden()&lt;/script&gt;]]>`, `1 &lt; 2 &gt; 0`},
+		{"HTML entities", `<![CDATA[<p>A &amp; B &eacute; &#233; &nbsp; C</p>]]>`, `A &amp; B é é C`},
+	} {
+		for _, format := range []string{"rss", "atom"} {
+			t.Run(format+"/"+test.name, func(t *testing.T) {
+				body := `<rss version="2.0"><channel><item><title>Article</title><description>` + test.text + `</description></item></channel></rss>`
+				if format == "atom" {
+					body = `<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Article</title><summary type="html">` + test.text + `</summary></entry></feed>`
+				}
+				tool, base := serveWebFeed(t, body, "application/xml")
+				result, _ := executeWebFeed(t, tool, WebFetchArgs{URL: base})
+				if _, summary, ok := strings.Cut(result.Content, "Feed summary: "); !ok || summary != test.want {
+					t.Errorf("summary = %q, want %q", summary, test.want)
+				}
+				assertWebFeedExcludes(t, result.Content, "attribute", "hiddenExecutable", "hiddenStyle", "hiddenComment", "encodedHidden", "<p", "<SCRIPT", "<b>")
+			})
+		}
+	}
+}
