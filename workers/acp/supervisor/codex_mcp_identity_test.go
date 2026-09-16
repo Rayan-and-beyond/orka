@@ -38,6 +38,22 @@ func TestCodexMCPPermissionUsesCorrelatedStructuredIdentity(t *testing.T) {
 			wantName: "web_search",
 		},
 		{
+			name: "unmarked completion confirms existing identity",
+			updates: []string{
+				`{"sessionUpdate":"tool_call","toolCallId":"call/1","kind":"execute","rawInput":{"server":"orka","tool":"web_search","arguments":{"query":"public news"}},"_meta":{"is_mcp_tool_call":true}}`,
+				`{"sessionUpdate":"tool_call_update","toolCallId":"call/1","status":"completed","rawInput":{"server":"orka","tool":"web_search","arguments":{"query":"public news"}},"rawOutput":{"result":{"content":[]},"error":null}}`,
+			},
+			wantName: "web_search",
+		},
+		{
+			name: "unmarked completion cannot change server",
+			updates: []string{
+				`{"sessionUpdate":"tool_call","toolCallId":"call/1","rawInput":{"server":"orka","tool":"web_search"},"_meta":{"is_mcp_tool_call":true}}`,
+				`{"sessionUpdate":"tool_call_update","toolCallId":"call/1","status":"completed","rawInput":{"server":"other","tool":"web_search"}}`,
+			},
+			wantError: true,
+		},
+		{
 			name:     "dotted tool on exact Orka server is permitted",
 			updates:  []string{`{"sessionUpdate":"tool_call","toolCallId":"call/1","rawInput":{"server":"orka","tool":"web.search"},"_meta":{"is_mcp_tool_call":true}}`},
 			wantName: "web.search",
@@ -234,6 +250,13 @@ func TestCodexCorrelatedMCPPermissionHTTP(t *testing.T) {
 	}
 	if mutations.resolveCalls.Load() != 1 {
 		t.Fatal("permission did not reach the native ACP client exactly once")
+	}
+	_, err = server.mapRuntimeEvent(state, state.prompt, acp.PromptEvent{
+		Type: acp.PromptEventUpdate, Timestamp: now.Add(time.Millisecond),
+		Update: &acp.SessionNotification{Update: json.RawMessage(`{"sessionUpdate":"tool_call_update","toolCallId":"call/1","status":"completed","rawInput":{"server":"orka","tool":"web_search","arguments":{}},"rawOutput":{"result":{"content":[{"type":"text","text":"public result"}]},"error":null}}`)},
+	})
+	if err != nil {
+		t.Fatalf("pinned Codex completion update was rejected after permission: %v", err)
 	}
 	state.mcpProxy.mu.Lock()
 	approvalCount := len(state.mcpProxy.approvals)

@@ -388,7 +388,13 @@ func (prompt *promptState) rememberToolCallName(notification *acp.SessionNotific
 	if provider == providerKindCodex && !markedMCPCall && len(call.RawInput) > 0 && policy != nil {
 		if previous, known := prompt.toolCallNames[id]; known {
 			if descriptor, allowed := policy.Descriptor(previous); allowed && descriptor.Source.Brokered() {
-				return fmt.Errorf("codex MCP tool identity changed to an unmarked input")
+				// The pinned adapter's completion update repeats rawInput but
+				// omits the start marker. It may confirm, never establish or
+				// replace, this prompt's already-verified server/tool identity.
+				confirmed, identityErr := codexMCPToolIdentity(call.RawInput, policy)
+				if identityErr != nil || confirmed != previous {
+					return fmt.Errorf("codex MCP tool identity changed on an unmarked update")
+				}
 			}
 		}
 	}
