@@ -43,6 +43,19 @@ team() {
 team team-payments approved-models claude-opus-4.7 alice
 team team-inventory openai gpt-5.5 bob
 
+# The cluster keeps one platform-owned admission webhook. It only lets
+# registered controller identities write Task status, so each team's
+# controller is registered with it; that is the platform team's one shared
+# decision per team.
+echo "==> registering team controllers with the shared admission webhook"
+kubectl -n orka-system get deploy orka-admission -o json |
+  jq --arg add "system:serviceaccount:team-payments:controller,system:serviceaccount:team-inventory:controller" '
+    .spec.template.spec.containers[0].args |= map(
+      if (startswith("--controller-usernames=") or startswith("--task-provenance-trusted-users=")) and (contains("team-payments") | not)
+      then . + "," + $add else . end)' |
+  kubectl apply -f - >/dev/null
+kubectl -n orka-system rollout status deploy/orka-admission --timeout=3m
+
 echo "==> router"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 python3 - "$router_src" "$CONTROLLER_IMAGE" >"$tmp/router.yaml" <<'PY'
