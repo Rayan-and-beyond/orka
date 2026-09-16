@@ -148,8 +148,14 @@ func (r *TaskReconciler) prepareAISoul(ctx context.Context, task *corev1alpha1.T
 // Pin before Job creation: final transcript/result/lock-release failures cannot
 // make a used Session appear unestablished or let its next Task change persona.
 func (r *TaskReconciler) pinAISoulSession(ctx context.Context, task *corev1alpha1.Task, prepared *resolvedAISoul) error {
-	if prepared == nil || task.Spec.SessionRef == nil {
+	if task.Spec.SessionRef == nil {
 		return nil
+	}
+	if r.SessionManager == nil {
+		if prepared == nil {
+			return nil
+		}
+		return invalidAISoulConfiguration("session manager is required for an AI soul")
 	}
 	if _, gateway, err := r.SessionManager.gatewayEventForTask(ctx, task); err != nil {
 		return err
@@ -158,10 +164,17 @@ func (r *TaskReconciler) pinAISoulSession(ctx context.Context, task *corev1alpha
 	}
 	writer, ok := r.SessionManager.store.(store.SessionSoulWriter)
 	if !ok {
+		if prepared == nil {
+			return nil // Legacy adapters cannot execute soul-enabled continuations.
+		}
 		return invalidAISoulConfiguration("session store does not support durable soul revision pinning")
 	}
+	var binding *corev1alpha1.TaskSoulBinding
+	if prepared != nil {
+		binding = &prepared.Binding
+	}
 	return writer.EnsureSessionSoulWithLock(ctx, task.Namespace, task.Spec.SessionRef.Name,
-		task.Name, string(task.UID), agentcontext.SessionDigest(&prepared.Binding))
+		task.Name, string(task.UID), agentcontext.SessionDigest(binding))
 }
 
 func (m *SessionManager) validateSoulContext(ctx context.Context, task *corev1alpha1.Task, binding *corev1alpha1.TaskSoulBinding) error {

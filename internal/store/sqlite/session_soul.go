@@ -57,9 +57,12 @@ func (s *Store) ReadSessionSoul(ctx context.Context, namespace, name, taskName, 
 // EnsureSessionSoulWithLock pins a non-Gateway Session before a worker starts.
 // The existing hidden anchor survives empty turns and failed transcript writes;
 // no transcript content or visible message count is created by this operation.
+// An empty digest explicitly pins absence of a soul, not an unused Session.
 func (s *Store) EnsureSessionSoulWithLock(ctx context.Context, namespace, name, taskName, taskUID, digest string) error {
-	if err := store.ValidateCanonicalDigest("Session soul digest", digest); err != nil {
-		return err
+	if digest != "" {
+		if err := store.ValidateCanonicalDigest("Session soul digest", digest); err != nil {
+			return err
+		}
 	}
 	if taskName == "" || taskUID == "" {
 		return store.ConflictErrorf("Task identity is required to pin Session soul context")

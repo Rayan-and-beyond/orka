@@ -21,11 +21,13 @@ const (
 func soulParameterSchema() map[string]any {
 	return map[string]any{
 		jsonSchemaTypeField: jsonSchemaTypeObject,
-		jsonSchemaDescriptionField: "Persistent Agent persona, separate from systemPrompt. " +
-			"Supported only for AI worker Agents and built-in codex, claude, copilot, and opencode Agents using orka.harness.v2. " +
-			"External runtimeRef and orka.harness.v1 Agents do not support souls. " +
-			"Use inline Markdown or an Agent-namespace ConfigMap with its exact SHA-256 digest. " +
-			"Copilot instructions cannot contain @ characters because its native loader processes file imports.",
+		jsonSchemaDescriptionField: fmt.Sprintf("Persistent Agent persona, separate from systemPrompt. "+
+			"Supported only for AI worker Agents and built-in codex, claude, copilot, and opencode Agents using orka.harness.v2. "+
+			"External runtimeRef and orka.harness.v1 Agents do not support souls. "+
+			"Use inline Markdown or an Agent-namespace ConfigMap with its exact SHA-256 digest. "+
+			"Soul content is limited to %d UTF-8 bytes (not characters). "+
+			"Inline maxLength counts Unicode characters only; runtime validation enforces the byte limit. "+
+			"Copilot instructions cannot contain @ characters because its native loader processes file imports.", agentcontext.MaxSoulBytes),
 		jsonSchemaPropertiesField: map[string]any{
 			soulInlineField:       map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, soulMinLengthField: 1, soulPatternField: soulNonWhitespacePattern, "maxLength": agentcontext.MaxSoulBytes},
 			soulConfigMapRefField: map[string]any{jsonSchemaTypeField: jsonSchemaTypeObject, jsonSchemaPropertiesField: map[string]any{"name": map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, soulMinLengthField: 1, soulPatternField: soulNonWhitespacePattern}, "key": map[string]any{jsonSchemaTypeField: jsonSchemaTypeString, soulMinLengthField: 1, soulPatternField: soulNonWhitespacePattern}}, jsonSchemaRequiredField: []string{"name", "key"}},

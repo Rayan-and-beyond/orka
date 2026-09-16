@@ -11,6 +11,7 @@ const SessionSoulAnchorSource = "soul-context"
 
 // SessionSoulState describes a pinned Task revision or the first canonical
 // message revision (first assistant message for gateway-owned conversations).
+// Established with an empty Digest means an explicitly no-soul conversation.
 type SessionSoulState struct {
 	Established    bool
 	Digest         string
@@ -28,6 +29,7 @@ type SessionSoulReader interface {
 
 // SessionSoulWriter durably pins ordinary AI Session identity under its exact
 // Task lock before execution. It writes only digest metadata, never persona text.
+// An empty digest pins absence of a soul so an empty turn cannot permit later opt-in.
 type SessionSoulWriter interface {
 	EnsureSessionSoulWithLock(context.Context, string, string, string, string, string) error
 }

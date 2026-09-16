@@ -105,13 +105,15 @@ cannot acquire one during a retry or autonomous iteration; create a new Task to
 enable it. Dollar syntax in soul-enabled AI Task and
 system prompts is transported literally, without Kubernetes environment expansion.
 
-For soul-enabled AI Tasks, conversation continuity pins controller-authored,
-digest-only revision metadata under the exact Task's Session lock **before the
-first Job starts**. The pin uses
-existing Session transcript storage, is hidden from transcript reads and message
-counts, and survives Task cleanup without a new SQLite schema or a separate
-persona store. Canonical turns also carry the same digest. A later transcript or
-result-write failure, or an empty initial turn, cannot erase the Session identity.
+For AI Tasks using Sessions, conversation continuity pins controller-authored
+revision metadata under the exact Task's Session lock **before the first Job
+starts**. A soul-enabled turn pins its digest; a turn without a soul pins explicit
+absence, so even an empty turn or `append: false` cannot allow a later Task to add
+its first persona to that Session. The pin uses existing Session transcript
+storage, is hidden from transcript reads and message counts, and survives Task
+cleanup without a new SQLite schema or a separate persona store. Canonical turns
+also carry the same revision. A later transcript or result-write failure, or an
+empty initial turn, cannot erase the Session identity.
 The pin is not rolled back if later Job creation fails or the Task is cancelled.
 Transient API, Session-store, and pin-write failures retry reconciliation without
 consuming an execution attempt; invalid configuration and revision drift still
