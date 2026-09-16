@@ -360,6 +360,10 @@ func (prompt *promptState) rememberToolCallName(notification *acp.SessionNotific
 	if err != nil {
 		return err
 	}
+	id, err := canonicalACPToolCallID(call.ToolCallID)
+	if err != nil {
+		return err
+	}
 	// codex-acp 1.1.7 sends the actual server/tool in marked rawInput, then
 	// asks permission with only the same toolCallId. Never infer authority
 	// from its display title or from an unmarked argument object.
@@ -374,6 +378,17 @@ func (prompt *promptState) rememberToolCallName(notification *acp.SessionNotific
 		if identityErr != nil {
 			return identityErr
 		}
+		if brokeredName == "" {
+			previous, known := prompt.toolCallNames[id]
+			if !known || policy == nil {
+				return fmt.Errorf("codex MCP partial update has no verified tool identity")
+			}
+			descriptor, allowed := policy.Descriptor(previous)
+			if !allowed || !descriptor.Source.Brokered() {
+				return fmt.Errorf("codex MCP partial update has no verified brokered identity")
+			}
+			brokeredName = previous
+		}
 		if brokeredName != "" {
 			if name != "" && name != brokeredName {
 				return fmt.Errorf("ACP tool call has conflicting tool identities")
@@ -381,9 +396,12 @@ func (prompt *promptState) rememberToolCallName(notification *acp.SessionNotific
 			name = brokeredName
 		}
 	}
-	id, err := canonicalACPToolCallID(call.ToolCallID)
-	if err != nil {
-		return err
+	if provider == providerKindCodex && !markedMCPCall && name != "" && policy != nil {
+		if descriptor, allowed := policy.Descriptor(name); allowed && descriptor.Source.Brokered() {
+			if previous, known := prompt.toolCallNames[id]; !known || previous != name {
+				return fmt.Errorf("codex MCP name alone cannot establish tool identity")
+			}
+		}
 	}
 	if provider == providerKindCodex && !markedMCPCall && len(call.RawInput) > 0 && policy != nil {
 		if previous, known := prompt.toolCallNames[id]; known {

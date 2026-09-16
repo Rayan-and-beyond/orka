@@ -30,6 +30,24 @@ func TestCodexMCPPermissionUsesCorrelatedStructuredIdentity(t *testing.T) {
 			wantName: "web_search",
 		},
 		{
+			name:      "marked name-only update cannot establish authority",
+			updates:   []string{`{"sessionUpdate":"tool_call","toolCallId":"call/1","name":"web_search","_meta":{"is_mcp_tool_call":true}}`},
+			wantError: true,
+		},
+		{
+			name:      "unmarked name-only update cannot seed MCP authority",
+			updates:   []string{`{"sessionUpdate":"tool_call","toolCallId":"call/1","name":"web_search"}`},
+			wantError: true,
+		},
+		{
+			name: "marked partial update retains verified identity",
+			updates: []string{
+				`{"sessionUpdate":"tool_call","toolCallId":"call/1","rawInput":{"server":"orka","tool":"web_search"},"_meta":{"is_mcp_tool_call":true}}`,
+				`{"sessionUpdate":"tool_call_update","toolCallId":"call/1","status":"in_progress","_meta":{"is_mcp_tool_call":true}}`,
+			},
+			wantName: "web_search",
+		},
+		{
 			name: "partial progress retains identity",
 			updates: []string{
 				`{"sessionUpdate":"tool_call","toolCallId":"call/1","rawInput":{"server":"orka","tool":"web_search","arguments":{}},"_meta":{"is_mcp_tool_call":true}}`,
