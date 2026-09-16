@@ -9,12 +9,19 @@ runtime_ns=${ORKA_RUNTIME_NAMESPACE:-orka-runtimes}
 branch=orka/healthz-from-sandbox
 export runtime_ns
 
+# Session names are unique per run: a Session that is still archiving from
+# the previous recording cannot be reused, and a fresh name reads better than
+# a wait. The rendered manifests are what the viewer sees.
+run_id=$(date -u +%H%M)
+session=inventory-sandbox-$run_id
+rendered=$demo_root/setup/state/02-agent-sandbox
+mkdir -p "$rendered"
+for m in $here/manifests/*.yaml; do
+  sed "s/SESSION_NAME/$session/" "$m" >"$rendered/$(basename "$m")"
+done
 ensure_port_forward
 orka_connect
-peq "orka session delete inventory-sandbox"
-wait_for "the previous Session to archive" "session_gone inventory-sandbox" 300
-peq "kubectl -n $ORKA_NAMESPACE delete tasks -l demo.orka.ai/name=02-agent-sandbox --wait=true"
-peq "kubectl -n $ORKA_NAMESPACE delete executionworkspaces -l demo.orka.ai/name=02-agent-sandbox --wait=true"
+delete_demo_objects 02-agent-sandbox
 peq "gh pr list --repo sozercan/orka-demo-inventory --head $branch --json number --jq '.[].number' | xargs -I{} gh pr close {} --repo sozercan/orka-demo-inventory --delete-branch"
 peq "gh api -X DELETE repos/sozercan/orka-demo-inventory/git/refs/heads/$branch"
 
@@ -45,30 +52,34 @@ say "or a Pod."
 
 chapter "Turn 1 — implement the change inside a Sandbox"
 
-pe "sed -n '12,36p' $here/manifests/turn-1-implement.yaml"
-pe "orka task create -f $here/manifests/turn-1-implement.yaml"
+pe "sed -n '12,36p' $rendered/turn-1-implement.yaml"
+pe "orka task create -f $rendered/turn-1-implement.yaml"
 say "The provider's objects appear as Orka binds a dedicated, single-session"
 say "runtime pool to a Sandbox."
 wait_for "the Sandbox to exist" "[[ -n \$(sandbox_name) ]]" 300
 sb=$(sandbox_name)
-wait_for "the Sandbox Pod" "kubectl -n $runtime_ns get pods --no-headers 2>/dev/null | grep -q Running" 300
-pe "kubectl -n $runtime_ns get sandboxclaims,sandboxes,pods"
-sb_uid=$(kubectl -n "$runtime_ns" get sandboxes.agents.x-k8s.io "$sb" -o jsonpath='{.metadata.uid}')
+wait_for "the Sandbox Pod" "kubectl -n $runtime_ns get pods --no-headers 2>/dev/null | grep sandbox-claim | grep -q Running" 300
+pe "kubectl -n $runtime_ns get sandboxes -o custom-columns=NAME:.metadata.name,MODE:.spec.operatingMode,READY:.status.conditions[?\(@.type==\"Ready\"\)].status"
 pod=$(kubectl -n "$runtime_ns" get pods -o name | grep sandbox-claim | head -n1 | cut -d/ -f2)
+pe "kubectl -n $runtime_ns get pod $pod"
+sb_uid=$(kubectl -n "$runtime_ns" get sandboxes.agents.x-k8s.io "$sb" -o jsonpath='{.metadata.uid}')
 say "The Sandbox Pod holds the agent runtime and nothing else. No Git token,"
 say "no model key: the provider proxy and the Publisher hold those."
 pe "kubectl -n $runtime_ns get pod $pod -o jsonpath='{.spec.volumes[*].secret.secretName}' | wc -w"
 pe "kubectl -n $runtime_ns exec $pod -- env | grep -E '^(GH_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY)=' || echo 'no provider or Git credential in the environment'"
 say "Now the agent works. Orka records what it does as execution events."
 wait_task inventory-implement 1800
-pe "orka task events inventory-implement | grep -E 'ToolCall|AgentRuntime|Workspace' | tail -n 8"
+pe "orka task events inventory-implement | awk 'NR>1 {print \$2}' | sort | uniq -c | sort -rn | head -n 6"
+pe "orka task events inventory-implement | grep ModelMessage | tail -n 2 | cut -c1-300"
 pe "orka task result inventory-implement | tail -n 20"
 say "The agent never pushed. Orka's Publisher verified the tree, published the"
 say "branch, and opened the pull request. The receipt lives on the Task."
 pe "orka task status inventory-implement"
 pr=$(gh pr list --repo sozercan/orka-demo-inventory --head "$branch" --json url --jq '.[0].url')
 assert_pr "$pr"
-pe "gh pr view $pr --json title,url --jq '{title,url}'"
+pe "gh pr view $pr --json title,url,headRefName --jq '{title,url,branch:.headRefName}'"
+say "Orka titles the PR by publication generation. The coordinator in the"
+say "chat demo gives it a real title; here the Task is the whole story."
 
 chapter "The Sandbox sleeps"
 
@@ -79,15 +90,16 @@ wait_for "the workspace to suspend" \
   "[[ \$(kubectl -n $ORKA_NAMESPACE get executionworkspace $ws -o jsonpath='{.status.state}') == Suspended ]]" 600
 pe "kubectl -n orka-system get executionworkspace $ws"
 pe "kubectl -n $runtime_ns get sandbox $sb -o custom-columns=NAME:.metadata.name,MODE:.spec.operatingMode,UID:.metadata.uid"
-pe "kubectl -n $runtime_ns get pods,pvc"
-ok "No agent Pod is running. The volume with the working tree is Bound and waiting."
+pe "kubectl -n $runtime_ns get pods | grep sandbox-claim || echo 'no Sandbox Pod'"
+pe "kubectl -n $runtime_ns get pvc -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,SIZE:.status.capacity.storage"
+ok "No Sandbox Pod is running. The volume with the working tree is Bound and waiting."
 
 chapter "Turn 2 — same Session, same disk"
 
 say "A second Task in the same Session: a verification pass in the same"
 say "Sandbox. The prompt only reads; an unchanged tree publishes nothing."
-pe "sed -n '14,24p' $here/manifests/turn-2-verify.yaml"
-pe "orka task create -f $here/manifests/turn-2-verify.yaml"
+pe "sed -n '14,24p' $rendered/turn-2-verify.yaml"
+pe "orka task create -f $rendered/turn-2-verify.yaml"
 wait_for "the Sandbox to wake" "[[ \$(sandbox_mode $sb) == Running ]]" 600
 pe "kubectl -n $runtime_ns get sandbox $sb -o custom-columns=NAME:.metadata.name,MODE:.spec.operatingMode,UID:.metadata.uid"
 [[ $(kubectl -n "$runtime_ns" get sandboxes.agents.x-k8s.io "$sb" -o jsonpath='{.metadata.uid}') == "$sb_uid" ]] ||

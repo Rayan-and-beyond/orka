@@ -41,7 +41,7 @@ SOURCE_KUBECONFIG=$SOURCE_KUBECONFIG bash demo/setup/vekil-auth.sh
 
 step "3/5 Provider, worker images, Git Secret"
 ORKA_DEMO_CLUSTER=$KIND_CLUSTER DEMO_PROVIDER_REF=copilot DEMO_PROVIDER_SECRET_REF=copilot-key \
-  DEMO_AI_MODEL=claude-opus-5 DEMO_RUNTIME_SECRET_REF=copilot-runtime-key \
+  DEMO_AI_MODEL=claude-opus-4.7 DEMO_RUNTIME_SECRET_REF=copilot-runtime-key \
   bash hack/demos/cluster/install-demo-model.sh
 
 step "4/5 Agent Sandbox"

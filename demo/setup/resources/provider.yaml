@@ -13,4 +13,4 @@ spec:
   secretRef:
     name: copilot-key
     key: api-key
-  defaultModel: claude-opus-5
+  defaultModel: claude-opus-4.7

@@ -207,6 +207,23 @@ session_gone() {
   ! orka session get "$1" >/dev/null 2>&1
 }
 
+# delete_demo_objects LABEL — remove a demo's Tasks and workspaces from a
+# previous run. Tasks bound to a Session keep their cleanup authority until
+# the Session is archived, so the Sessions go first and the wait is real.
+delete_demo_objects() {
+  local selector="demo.orka.ai/name=$1" sessions session
+  sessions=$(kubectl -n "$ORKA_NAMESPACE" get tasks -l "$selector" -o jsonpath='{range .items[*]}{.spec.sessionRef.name}{"\n"}{end}' 2>/dev/null | sort -u | grep . || true)
+  for session in $sessions; do
+    orka session delete "$session" >/dev/null 2>&1 || true
+  done
+  for session in $sessions; do
+    wait_for "Session $session to archive" "session_gone $session" 300 || true
+  done
+  kubectl -n "$ORKA_NAMESPACE" delete tasks -l "$selector" --ignore-not-found --wait=true --timeout=300s >/dev/null 2>&1 || true
+  kubectl -n "$ORKA_NAMESPACE" delete executionworkspacecheckpoints -l "$selector" --ignore-not-found --wait=true --timeout=300s >/dev/null 2>&1 || true
+  kubectl -n "$ORKA_NAMESPACE" delete executionworkspaces -l "$selector" --ignore-not-found --wait=true --timeout=300s >/dev/null 2>&1 || true
+}
+
 # task_phase NAME — the Task's current phase, or empty.
 task_phase() {
   kubectl -n "$ORKA_NAMESPACE" get task "$1" -o jsonpath='{.status.phase}' 2>/dev/null || true

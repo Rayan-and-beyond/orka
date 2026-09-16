@@ -26,14 +26,14 @@ pe "orka security repo list"
 
 chapter "Scan"
 
-say "A scan is an agent Task with a read-only clone of the repository. The"
-say "reviewer writes a threat model, then reviews the code slice by slice."
-pe "orka security scan run $repo"
-watch_tasks "orka security scan list $repo -o json | jq -e '[.items[] | select(.phase == \"succeeded\")] | length > 0'" 20
-if orka security scan list "$repo" -o json | jq -e '[.items[] | select(.phase == "failed")] | length > 0' >/dev/null; then
-  bad "the scan run failed"; exit 1
-fi
-pe "orka security scan list $repo"
+say "Registering a repository starts its first scan. A scan is an agent Task"
+say "with a read-only clone: the reviewer writes a threat model, then reviews"
+say "the code slice by slice. Later scans run on the schedule, or on demand"
+say "with orka security scan run."
+latest_scan() { orka security scan list "$repo" -o json | jq -r 'sort_by(.startedAt) | last | .phase // empty'; }
+watch_tasks "[[ \$(latest_scan) =~ ^(succeeded|failed)$ ]]" 20 orka.ai/security-target=$repo
+[[ $(latest_scan) == succeeded ]] || { bad "the scan run failed"; exit 1; }
+pe "orka security scan list $repo -o json | jq '.items[0] | {phase,sliceCount,reviewedSliceCount,acceptedFindings,droppedFindings,summary}'"
 pe "orka security threat-model get $repo -o json | jq -r .content | head -n 20"
 
 chapter "Findings, with evidence"
@@ -50,7 +50,7 @@ chapter "A person decides to fix it"
 say "Remediation never happens by itself. A person asks for a patch; a coder"
 say "agent works in a write-intent workspace; Orka's Publisher opens the PR."
 pe "orka security finding patch $finding"
-watch_tasks "orka security finding patches $finding -o json | jq -e '[.items[] | select(.status == \"pr_opened\" or (.status | test(\"failed|rejected\")))] | length > 0'" 20
+watch_tasks "orka security finding patches $finding -o json | jq -e '[.items[] | select(.status == \"pr_opened\" or (.status | test(\"failed|rejected\")))] | length > 0'" 20 orka.ai/security-target=$repo
 if orka security finding patches "$finding" -o json | jq -e '[.items[] | select(.status | test("failed|rejected"))] | length > 0' >/dev/null; then
   bad "the patch proposal did not reach pr_opened"; orka security finding patches "$finding" -o json | jq '.items[] | {status,reason}' >&2; exit 1
 fi
@@ -59,6 +59,6 @@ pe "orka security finding pr $finding -o json"
 pr=$(orka security finding pr "$finding" -o json | jq -r '.prURL // empty')
 assert_pr "$pr"
 pe "gh pr view $pr --json title,url --jq '{title,url}'"
-pe "gh pr diff $pr --stat"
+pe "gh pr diff $pr --name-only"
 ok "Found, validated, and fixed, with a human decision in the middle."
 printf '\n'

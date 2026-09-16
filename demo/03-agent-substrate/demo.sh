@@ -21,14 +21,20 @@ kubectl() {
 }
 
 branch=orka/security-audit
+# Session names are unique per run: a Session that is still archiving from
+# the previous recording cannot be reused, and a fresh name reads better than
+# a wait. The rendered manifests are what the viewer sees.
+run_id=$(date -u +%H%M)
+session=inventory-audit-$run_id
+rendered=$demo_root/setup/state/03-agent-substrate
+mkdir -p "$rendered"
+for m in $here/manifests/*.yaml; do
+  sed "s/SESSION_NAME/$session/" "$m" >"$rendered/$(basename "$m")"
+done
 ensure_port_forward
 orka_connect
-peq "orka session delete inventory-audit"
-wait_for "the previous Session to archive" "session_gone inventory-audit" 300
-peq "kubectl -n $ORKA_NAMESPACE delete tasks -l demo.orka.ai/name=03-agent-substrate --wait=true"
+delete_demo_objects 03-agent-substrate
 peq "gh api -X DELETE repos/sozercan/orka-demo-inventory/git/refs/heads/$branch"
-peq "kubectl -n $ORKA_NAMESPACE delete executionworkspacecheckpoints -l demo.orka.ai/name=03-agent-substrate --wait=true"
-peq "kubectl -n $ORKA_NAMESPACE delete executionworkspaces -l demo.orka.ai/name=03-agent-substrate --wait=true"
 
 workspace_of() {
   kubectl -n "$ORKA_NAMESPACE" get task "$1" \
@@ -59,8 +65,8 @@ pe "kubectl -n orka-system get executionworkspaceclass substrate-session -o json
 
 chapter "Turn 1 — audit the code inside an Actor"
 
-pe "sed -n '12,36p' $here/manifests/turn-1-audit.yaml"
-pe "orka task create -f $here/manifests/turn-1-audit.yaml"
+pe "sed -n '12,36p' $rendered/turn-1-audit.yaml"
+pe "orka task create -f $rendered/turn-1-audit.yaml"
 wait_for "an Actor to boot" "(( \$(actor_count) >= 1 ))" 600
 pe "kubectl ate get actors -a $atespace"
 first_actor=$(actor_uid)
@@ -87,7 +93,7 @@ ok "Zero Actors. Zero compute. The data is kept."
 chapter "Turn 2 — a fresh Actor boots from the kept data"
 
 say "A read-only turn in the same Session: print what is on disk."
-pe "orka task create -f $here/manifests/turn-2-read.yaml"
+pe "orka task create -f $rendered/turn-2-read.yaml"
 wait_for "a new Actor to boot" "(( \$(actor_count) >= 1 ))" 600
 pe "kubectl ate get actors -a $atespace"
 second_actor=$(actor_uid)
@@ -103,7 +109,7 @@ chapter "Export a checkpoint"
 
 wait_for "the workspace to suspend again" "[[ \$(ws_state $ws) == Suspended ]]" 600
 ws_uid=$(kubectl -n "$ORKA_NAMESPACE" get executionworkspace "$ws" -o jsonpath='{.metadata.uid}')
-sed "s/WORKSPACE_NAME/$ws/; s/WORKSPACE_UID/$ws_uid/" "$here/manifests/checkpoint.yaml" >"$demo_root/setup/state/03-checkpoint.yaml"
+sed "s/WORKSPACE_NAME/$ws/; s/WORKSPACE_UID/$ws_uid/" "$rendered/checkpoint.yaml" >"$demo_root/setup/state/03-checkpoint.yaml"
 say "A checkpoint is an object of its own, bound to the exact workspace UID."
 pe "cat $demo_root/setup/state/03-checkpoint.yaml"
 pe "kubectl apply -f $demo_root/setup/state/03-checkpoint.yaml"
@@ -118,20 +124,25 @@ pe "kubectl -n orka-system delete executionworkspace $ws --wait=false"
 wait_for "the workspace to disappear" "! kubectl -n $ORKA_NAMESPACE get executionworkspace $ws >/dev/null 2>&1" 600
 pe "kubectl -n orka-system get executionworkspaces"
 say "A brand-new Task restores from the checkpoint. It names the checkpoint's"
-say "UID and digest, so a swapped checkpoint is refused."
+say "UID and digest, so a swapped checkpoint is refused, and it carries the"
+say "same workspace settings so the runtime profile matches what was saved."
 cp_uid=$(kubectl -n "$ORKA_NAMESPACE" get executionworkspacecheckpoint audit-checkpoint -o jsonpath='{.metadata.uid}')
 cp_digest=$(kubectl -n "$ORKA_NAMESPACE" get executionworkspacecheckpoint audit-checkpoint -o jsonpath='{.status.digest}')
-sed "s/CHECKPOINT_UID/$cp_uid/; s/CHECKPOINT_DIGEST/$cp_digest/" "$here/manifests/turn-3-restore.yaml" >"$demo_root/setup/state/03-restore.yaml"
-pe "sed -n '14,25p' $demo_root/setup/state/03-restore.yaml"
+sed "s/CHECKPOINT_UID/$cp_uid/; s/CHECKPOINT_DIGEST/$cp_digest/" "$rendered/turn-3-restore.yaml" >"$demo_root/setup/state/03-restore.yaml"
+pe "sed -n '17,27p' $demo_root/setup/state/03-restore.yaml"
 pe "orka task create -f $demo_root/setup/state/03-restore.yaml"
 wait_task audit-restore 1200
 pe "orka task result audit-restore"
 ok "The file written by an Actor that no longer exists, in a workspace that was deleted, came back byte for byte."
+say "The restored tree is a real workspace again: Orka verified it and"
+say "published it to its own branch."
+pe "orka task status audit-restore | grep -E 'Delivery|Publication'"
 
 chapter "Clean up"
 
 pe "kubectl -n orka-system delete executionworkspacecheckpoint audit-checkpoint"
 peq "gh api -X DELETE repos/sozercan/orka-demo-inventory/git/refs/heads/$branch"
+peq "gh api -X DELETE repos/sozercan/orka-demo-inventory/git/refs/heads/$branch-restored"
 wait_for "the restored workspace to be collected" \
   "[[ -z \$(kubectl -n $ORKA_NAMESPACE get executionworkspaces -l demo.orka.ai/name=03-agent-substrate --no-headers 2>/dev/null) ]]" 600 || true
 pe "kubectl ate get actors -a $atespace"

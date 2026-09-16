@@ -1,6 +1,8 @@
 # Turn 3: a new Task, restored from the checkpoint. The original workspace
-# and its Actors are gone; the bytes come back. No repository is cloned here:
-# the checkpoint is the workspace.
+# and its Actors are gone; the bytes come back. The restore names the
+# checkpoint's UID and digest, so a swapped checkpoint is refused, and it
+# carries the same workspace settings as the source so the runtime profile
+# matches what was checkpointed.
 apiVersion: core.orka.ai/v1alpha1
 kind: Task
 metadata:
@@ -21,7 +23,19 @@ spec:
         name: audit-checkpoint
         uid: CHECKPOINT_UID
         digest: CHECKPOINT_DIGEST
+  workspace:
+    intent: write
+    gitRepo: https://github.com/sozercan/orka-demo-inventory
+    branch: main
+    readCredentialRef:
+      name: github-credentials
+    publicationGitRepo: https://github.com/sozercan/orka-demo-inventory
+    publicationReadCredentialRef:
+      name: github-credentials
+    publicationCredentialRef:
+      name: github-credentials
+    pushBranch: orka/security-audit-restored
   timeout: 20m
   prompt: |
-    Run: pwd; ls; cat AUDIT.md. Reply with the exact combined output and
-    nothing else.
+    Do not change any file. Run: pwd; ls; cat AUDIT.md. Reply with the exact
+    combined output and nothing else.

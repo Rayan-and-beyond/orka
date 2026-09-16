@@ -14,7 +14,7 @@ spec:
   agentRef:
     name: codex-coder
   sessionRef:
-    name: inventory-sandbox
+    name: SESSION_NAME
     create: true
   execution:
     workspace:
@@ -41,5 +41,6 @@ spec:
   prompt: |
     Add a GET /healthz endpoint that returns HTTP 200 with the JSON body
     {"status":"ok"}. Add a unit test for it in the existing style and add the
-    endpoint to the API table in README.md. Run go test ./... before you
-    finish. Reply with the test output and the list of files you changed.
+    endpoint to the API table in README.md. This runtime has no Go toolchain,
+    so do not try to build or test; CI runs the tests on the pull request.
+    Reply with a short summary and the list of files you changed.

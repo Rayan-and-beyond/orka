@@ -35,7 +35,7 @@ metadata:
   namespace: orka-system
 spec:
   model:
-    name: claude-opus-5
+    name: claude-opus-4.7
   runtime:
     type: claude
     contractVersion: orka.harness.v2

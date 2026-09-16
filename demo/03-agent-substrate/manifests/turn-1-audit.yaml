@@ -13,7 +13,7 @@ spec:
   agentRef:
     name: codex-coder
   sessionRef:
-    name: inventory-audit
+    name: SESSION_NAME
     create: true
   execution:
     workspace:

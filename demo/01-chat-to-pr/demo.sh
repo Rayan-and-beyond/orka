@@ -13,7 +13,9 @@ mkdir -p "$work"
 # recorded environment variables are the ones that take effect.
 export CLAUDE_CONFIG_DIR=$work/claude
 mkdir -p "$CLAUDE_CONFIG_DIR"
-printf '{"permissions":{"defaultMode":"bypassPermissions"}}\n' >"$CLAUDE_CONFIG_DIR/settings.json"
+# Claude Code also uses a small model for housekeeping calls; name one the
+# Provider serves, or those calls fail noisily in the controller log.
+printf '{"permissions":{"defaultMode":"bypassPermissions"},"env":{"ANTHROPIC_SMALL_FAST_MODEL":"copilot/claude-haiku-4.5"}}\n' >"$CLAUDE_CONFIG_DIR/settings.json"
 
 # Quiet reset so the recording always starts from the same place.
 peq "kubectl -n $ORKA_NAMESPACE delete tasks -l orka.ai/source=anthropic-proxy --wait=false"
@@ -60,8 +62,8 @@ pe "cat $here/request.md"
 say "Sent as an ordinary Claude Code prompt. Orka's coordinator mode replaces the"
 say "client's tools with its own: create Agents and Tasks, wait, review, open a PR."
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-p "claude -p --model copilot/claude-opus-5 \"\$(cat $here/request.md)\" | tee $work/answer.md &"
-claude -p --model copilot/claude-opus-5 --no-session-persistence "$(cat "$here/request.md")" \
+p "claude -p --model copilot/claude-opus-4.7 \"\$(cat $here/request.md)\" | tee $work/answer.md &"
+claude -p --model copilot/claude-opus-4.7 --no-session-persistence "$(cat "$here/request.md")" \
   >"$work/answer.md" 2>"$work/claude.err" &
 claude_pid=$!
 nap 0.6
@@ -101,7 +103,7 @@ pe "cat $work/answer.md"
 pr=$(pr_url_from "$(cat "$work/answer.md")")
 assert_pr "$pr"
 pe "gh pr view $pr --json title,state,headRefName,statusCheckRollup --jq '{title,state,branch:.headRefName,checks:[.statusCheckRollup[]?|{name,conclusion}]}'"
-pe "gh pr diff $pr --stat"
+pe "gh pr diff $pr --name-only"
 ok "One chat message. One reviewed, CI-green pull request. No model key ever left the cluster."
 
 chapter "What the developer never had"
