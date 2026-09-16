@@ -250,13 +250,14 @@ wait_task() {
   fi
 }
 
-# watch_tasks "until-command" [interval] [label-selector]
+# watch_tasks "until-command" [interval] [label-selector] [columns]
 # Prints the task table whenever it changes, until the condition holds. The
 # recorder compresses the quiet stretches, so the viewer sees the workflow
 # advance instead of a spinner.
 watch_tasks() {
   local until=$1 interval=${2:-10} selector=${3:-} last="" now
-  local cmd="kubectl -n $ORKA_NAMESPACE get tasks --no-headers -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,PHASE:.status.phase --sort-by=.metadata.creationTimestamp"
+  local columns=${4:-NAME:.metadata.name,TYPE:.spec.type,PHASE:.status.phase}
+  local cmd="kubectl -n $ORKA_NAMESPACE get tasks -o custom-columns=$columns --sort-by=.metadata.creationTimestamp"
   [[ -n $selector ]] && cmd+=" -l $selector"
   while true; do
     now=$(eval "$cmd" 2>/dev/null || true)

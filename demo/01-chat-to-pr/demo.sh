@@ -30,16 +30,25 @@ ensure_port_forward
 banner "Orka — from a chat message to a pull request" \
   "A developer asks Claude Code for a change. Orka runs the agents on Kubernetes. The keys stay in the cluster."
 
+chapter "The scenario"
+
+say "A small team runs an inventory service on Kubernetes. It has three endpoints"
+say "and no health check, so its readiness probe has nothing to call."
+pe "curl -s https://raw.githubusercontent.com/sozercan/orka-demo-inventory/main/README.md | sed -n '13,19p'"
+say "A developer is going to ask for that endpoint the way they would ask a"
+say "colleague: in a chat window. Orka will do the rest on the cluster."
+
 chapter "A cluster that runs agents"
 
-say "Orka is a Kubernetes controller. It was installed with one Helm command, and"
-say "everything it does is a Kubernetes object you can list, watch, and audit."
-pe "kubectl -n orka-system get pods"
+say "Orka is a Kubernetes controller, installed with one Helm command."
+pe "kubectl -n orka-system get pods -l control-plane=controller-manager"
 say "The platform team registered one model Provider. Its API key is a Secret in"
-say "the cluster. Nobody on the team has it on a laptop."
-pe "kubectl -n orka-system get providers,agents"
-say "Two Agents are allowed: a Codex coder that can run shell and tests, and a"
-say "Claude reviewer with read-only tools. Tasks can only point at these."
+say "the cluster; nobody on the team has it on a laptop."
+pe "orka provider list"
+say "And two Agents for this team: a Codex coder that edits and runs commands,"
+say "and a Claude reviewer with read-only tools. A Task names an Agent and"
+say "inherits its model, runtime, and permissions."
+pe "orka agent list"
 
 chapter "Connect as a developer"
 
@@ -80,9 +89,14 @@ say "creating Kubernetes Tasks. Each one is a Pod or a pooled agent runtime."
 wait_for "the coordinator's first Task" \
   "kubectl -n $ORKA_NAMESPACE get tasks -l orka.ai/source=anthropic-proxy --no-headers 2>/dev/null | grep -q ." 600
 pe "orka task list"
-say "The task table below refreshes as the coordinator works: implement, validate"
-say "in a container, review, open the PR, wait for CI. Quiet stretches are cut."
-watch_tasks "! kill -0 $claude_pid" 12 orka.ai/source=anthropic-proxy
+say "Tasks born from the chat endpoint are named proxy- plus a short id. Each"
+say "one says what it is: an agent Task names its Agent and whether it may"
+say "write; a container Task names its image."
+say "The table below refreshes as the coordinator works. Read it as: the coder"
+say "implements, a golang container validates, the reviewer reads, the coder"
+say "fixes if asked. Quiet stretches are cut from the recording."
+watch_tasks "! kill -0 $claude_pid" 12 orka.ai/source=anthropic-proxy \
+  NAME:.metadata.name,AGENT:.spec.agentRef.name,IMAGE:.spec.image,INTENT:.spec.workspace.intent,PHASE:.status.phase
 wait "$claude_pid" || {
   bad "claude exited with an error"
   cat "$work/claude.err" >&2
@@ -96,8 +110,8 @@ coder=$(kubectl -n "$ORKA_NAMESPACE" get tasks -l orka.ai/source=anthropic-proxy
   --sort-by=.metadata.creationTimestamp -o json |
   jq -r '[.items[] | select(.spec.type=="agent" and .spec.workspace.intent=="write")][0].metadata.name')
 say "The coder ran as a Codex session in a pooled runtime, with the repository"
-say "cloned into its workspace. Orka records what it did as execution events."
-pe "orka task events $coder | awk 'NR>1 {print \$2}' | sort | uniq -c | sort -rn | sed -n '1,6p'"
+say "cloned into its workspace. Orka keeps its execution events; here is what"
+say "the agent said as it worked."
 pe "orka task events $coder | grep ModelMessage | tail -n 2 | cut -c1-300"
 say "The agent never pushed. Orka's clean-room Publisher verified the tree and"
 say "published the branch; the receipt lives on the Task."
