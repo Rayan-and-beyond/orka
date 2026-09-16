@@ -11,6 +11,7 @@ terminal: a pull request, an object that survived deletion, a refusal.
 | 2 | [`02-agent-sandbox`](02-agent-sandbox) | Two turns of Codex in one kubernetes-sigs Agent Sandbox. The Sandbox is suspended between turns and wakes with the same disk, then opens the PR. |
 | 3 | [`03-agent-substrate`](03-agent-substrate) | Codex as a gVisor Actor on Agent Substrate. Data-only suspend, a cold boot into a new Actor, a checkpoint that restores after the workspace is deleted. |
 | 4 | [`04-security-scan`](04-security-scan) | A vulnerable app scanned into findings with evidence. A person picks one; Orka validates it and opens the fix. |
+| 5 | [`05-two-teams`](05-two-teams) | Two teams, two namespaces, two Orka installations, one shared AI URL. The caller's token picks the team; cross-team requests are refused. Uses the compatibility router from PR #604. |
 
 The scripts are plain bash. `demo/lib/demo.sh` types commands the way a
 person would, and every command the viewer sees is the command that ran.
@@ -47,6 +48,17 @@ cp demo/setup/env.sh.example demo/setup/env.sh   # then adjust paths
 `cluster-up.sh` layers the existing installers under `hack/demos/cluster/`;
 read its header for the order and why. `vekil-auth.sh` copies an existing
 GitHub Copilot login between clusters so no demo needs an interactive login.
+
+Demo 5 needs two more namespace-scoped installations and the router. Build a
+controller image from a checkout that includes PR #604 (it ships
+`/compat-router`), then:
+
+```sh
+CONTROLLER_IMAGE=<registry>/orka/controller@sha256:<digest> demo/setup/two-teams.sh
+```
+
+`two-teams.sh` also registers the team controllers with the cluster's shared
+admission webhook; without that, their Task status updates are refused.
 
 Then record:
 
