@@ -656,6 +656,9 @@ func formatAge(timestamp string) string {
 		return timestamp
 	}
 	d := time.Since(t)
+	if d < 0 {
+		d = 0
+	}
 	switch {
 	case d < time.Minute:
 		return fmt.Sprintf("%ds", int(d.Seconds()))
