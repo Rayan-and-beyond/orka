@@ -820,6 +820,10 @@ func (r *TaskReconciler) handlePending(ctx context.Context, task *corev1alpha1.T
 	}
 
 	if task.Spec.Type == corev1alpha1.TaskTypeAgent {
+		// Admission allows an omitted built-in contract. Use the same effective
+		// Agent for routing, SOUL validation and binding before its reconciler
+		// has had a chance to persist the namespace-mode default.
+		agent = withEffectiveBuiltInContract(agent, r.Mode)
 		plan := r.planAgentExecution(ctx, task, agent)
 		if err := validatePlannedRuntimeRefAgentTaskRestrictions(task, agent, plan); err != nil {
 			return r.rejectPlannedAgentExecution(ctx, task, rejectAgentExecutionPlan(err.Error()))
