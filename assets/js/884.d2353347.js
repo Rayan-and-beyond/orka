@@ -1,1 +1,0 @@
-"use strict";(globalThis.webpackChunkorka_website=globalThis.webpackChunkorka_website||[]).push([[884],{884(e,a,s){s.d(a,{createTreemapServices:()=>r.d});var r=s(6527);s(4954)}}]);
