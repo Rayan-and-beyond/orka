@@ -145,14 +145,16 @@ describe('AgentCreateForm', () => {
       await user.type(screen.getByLabelText('Max Output Tokens'), '4096')
     }
     expect(screen.getByLabelText('System Prompt')).not.toBeRequired()
-    await user.type(screen.getByLabelText('System Prompt'), 'Review code for correctness.')
-    await user.type(screen.getByLabelText('Soul (optional)'), 'Be concise and respectful.')
+    const roleText = runtimeType === 'copilot' ? 'Review code for correctness.' : 'Discuss @mentions literally.'
+    const soulText = runtimeType === 'copilot' ? 'Be concise and respectful.' : 'Sign off as @owl.'
+    await user.type(screen.getByLabelText('System Prompt'), roleText)
+    await user.type(screen.getByLabelText('Soul (optional)'), soulText)
     await user.click(screen.getByRole('button', { name: 'Create Agent' }))
 
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Agent created'))
     expect(submitted.spec.runtime.type).toBe(runtimeType)
-    expect(submitted.spec.systemPrompt).toEqual({ inline: 'Review code for correctness.' })
-    expect(submitted.spec.soul).toEqual({ inline: 'Be concise and respectful.' })
+    expect(submitted.spec.systemPrompt).toEqual({ inline: roleText })
+    expect(submitted.spec.soul).toEqual({ inline: soulText })
   })
 
   it('keeps the AI role visible and editable when switching to a built-in runtime', async () => {
@@ -185,6 +187,33 @@ describe('AgentCreateForm', () => {
     expect(submitted.spec.runtime).toEqual({ type: 'claude' })
     expect(submitted.spec.systemPrompt).toEqual({ inline: 'Updated runtime role' })
     expect(submitted.spec.soul).toEqual({ inline: 'Shared persona' })
+  })
+
+  it.each(['System Prompt', 'Soul (optional)'])('rejects Copilot import markers in %s before posting', async (fieldLabel) => {
+    useStateModeOverride = 'runtime'
+    let postCount = 0
+    server.use(http.post('/api/v1/agents', () => {
+      postCount += 1
+      return HttpResponse.json({})
+    }))
+
+    const user = userEvent.setup()
+    render(<AgentCreateForm />)
+    await user.type(screen.getByPlaceholderText('my-agent'), 'copilot-agent')
+    const profileTrigger = screen.getByText('Runtime profile').closest('.space-y-2')!.querySelector('[role="combobox"]')!
+    await act(async () => {
+      fireEvent.pointerDown(profileTrigger, { button: 0, pointerId: 1, pointerType: 'mouse' })
+    })
+    fireEvent.click(await screen.findByRole('option', { name: 'GitHub Copilot ACP' }))
+    await waitFor(() => expect(profileTrigger).toHaveTextContent('GitHub Copilot ACP'))
+    await user.type(screen.getByLabelText('Model'), 'runtime-model')
+    await user.type(screen.getByLabelText(fieldLabel), 'Follow @instructions.md')
+    await user.click(screen.getByRole('button', { name: 'Create Agent' }))
+
+    expect(toast.error).toHaveBeenCalledWith('Copilot instructions must not contain @ references; inline the referenced text')
+    expect(postCount).toBe(0)
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(mockNavigate).not.toHaveBeenCalled()
   })
 
   it('submits a built-in Copilot ACP runtime profile', async () => {
@@ -336,9 +365,15 @@ describe('AgentCreateForm', () => {
     const user = userEvent.setup()
     render(<AgentCreateForm />)
     await user.type(screen.getByPlaceholderText('my-agent'), 'external-agent')
+    const profileTrigger = screen.getByText('Runtime profile').closest('.space-y-2')!.querySelector('[role="combobox"]')!
+    await act(async () => {
+      fireEvent.pointerDown(profileTrigger, { button: 0, pointerId: 1, pointerType: 'mouse' })
+    })
+    fireEvent.click(await screen.findByRole('option', { name: 'GitHub Copilot ACP' }))
+    await waitFor(() => expect(profileTrigger).toHaveTextContent('GitHub Copilot ACP'))
     await user.type(screen.getByLabelText('Model'), 'stale-built-in-model')
-    await user.type(screen.getByLabelText('System Prompt'), 'Stale built-in role')
-    await user.type(screen.getByLabelText('Soul (optional)'), 'Stale built-in persona')
+    await user.type(screen.getByLabelText('System Prompt'), 'Stale built-in @role')
+    await user.type(screen.getByLabelText('Soul (optional)'), 'Stale built-in @persona')
     const sourceTrigger = screen.getByText('Runtime source').closest('.space-y-2')!.querySelector('[role="combobox"]')!
     await act(async () => {
       fireEvent.pointerDown(sourceTrigger, { button: 0, pointerId: 1, pointerType: 'mouse' })
@@ -372,16 +407,16 @@ describe('AgentCreateForm', () => {
     await user.type(screen.getByPlaceholderText('my-agent'), 'native-agent')
     await user.type(screen.getByPlaceholderText('claude-sonnet-4-20250514'), 'native-model')
     if (withPrompts) {
-      await user.type(screen.getByLabelText('System Prompt'), 'Native AI role')
-      await user.type(screen.getByLabelText('Soul (optional)'), 'Native AI persona')
+      await user.type(screen.getByLabelText('System Prompt'), 'Native AI @role')
+      await user.type(screen.getByLabelText('Soul (optional)'), 'Native AI @persona')
     }
     await user.click(screen.getByRole('button', { name: 'Create Agent' }))
 
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Agent created'))
     expect(submitted.spec.runtime).toBeUndefined()
     expect(submitted.spec.model.name).toBe('native-model')
-    expect(submitted.spec.systemPrompt).toEqual(withPrompts ? { inline: 'Native AI role' } : undefined)
-    expect(submitted.spec.soul).toEqual(withPrompts ? { inline: 'Native AI persona' } : undefined)
+    expect(submitted.spec.systemPrompt).toEqual(withPrompts ? { inline: 'Native AI @role' } : undefined)
+    expect(submitted.spec.soul).toEqual(withPrompts ? { inline: 'Native AI @persona' } : undefined)
     expect(mockNavigate).toHaveBeenCalledWith({ to: '/agents' })
   })
 })

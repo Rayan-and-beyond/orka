@@ -77,6 +77,16 @@ export function AgentCreateForm() {
       return
     }
 
+    if (
+      mode === 'runtime'
+      && runtimeSource === 'built-in'
+      && runtimeType === 'copilot'
+      && (systemPrompt.includes('@') || soul.includes('@'))
+    ) {
+      toast.error('Copilot instructions must not contain @ references; inline the referenced text')
+      return
+    }
+
     const spec: Record<string, unknown> = {}
 
     if (mode === 'ai') {
