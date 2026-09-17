@@ -1,10 +1,12 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -230,11 +232,27 @@ func readCommittedWorkspacePreparation(ctx context.Context, effects store.Extern
 	if err != nil {
 		return err
 	}
-	if effect == nil || effect.Identity != identity || effect.State != store.ExternalEffectSucceeded || len(effect.Response) == 0 || effect.ResponseDigest != store.CanonicalBytesDigest(effect.Response) {
+	if effect == nil || effect.Identity != identity || effect.State != store.ExternalEffectSucceeded || len(effect.Response) == 0 {
 		return fmt.Errorf("%w: workspace preparation evidence is missing or corrupt", store.ErrConflict)
 	}
-	if err := json.Unmarshal(effect.Response, into); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(effect.Response))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(into); err != nil {
 		return fmt.Errorf("decode committed workspace preparation: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return fmt.Errorf("%w: workspace preparation has trailing JSON", store.ErrConflict)
+	}
+	if effect.ResponseDigest != store.CanonicalBytesDigest(effect.Response) {
+		// The producer commits json.Marshal(WorkspacePrepareResponse), but
+		// Kubernetes stores this field as JSON and may reorder object keys.
+		// Reconstruct that exact, closed producer schema rather than dropping
+		// digest verification or accepting arbitrary semantic normalization.
+		original, err := json.Marshal(into)
+		if err != nil || effect.ResponseDigest != store.CanonicalBytesDigest(original) {
+			return fmt.Errorf("%w: workspace preparation evidence is missing or corrupt", store.ErrConflict)
+		}
 	}
 	return nil
 }

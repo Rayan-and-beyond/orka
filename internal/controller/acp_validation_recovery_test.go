@@ -445,3 +445,48 @@ func TestCurrentEpochAbandonedValidationRejectsTakeoverBeforeSend(t *testing.T) 
 		t.Fatalf("takeover validation: mutations=%d err=%v", mutations, err)
 	}
 }
+
+func TestRecoveredValidationAcceptsKubernetesJSONReordering(t *testing.T) {
+	d, task, control, _ := validationRecoveryFixture(t, true)
+	var reordered map[string]any
+	if err := json.Unmarshal(control.preparation.Response, &reordered); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(reordered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(encoded, control.preparation.Response) {
+		t.Fatal("fixture did not change producer field order")
+	}
+	control.preparation.Response = encoded
+	if _, _, err := d.recoveredValidationWorkspace(t.Context(), task, task.UID); err != nil {
+		t.Fatalf("Kubernetes reordered intact preparation JSON: %v", err)
+	}
+	for _, name := range []string{"changed value", "unknown field", "trailing value"} {
+		t.Run(name, func(t *testing.T) {
+			copyDispatcher, copyTask, copyControl, _ := validationRecoveryFixture(t, true)
+			var changed map[string]any
+			if err := json.Unmarshal(encoded, &changed); err != nil {
+				t.Fatal(err)
+			}
+			switch name {
+			case "changed value":
+				changed["baselineOid"] = strings.Repeat("b", 40)
+			case "unknown field":
+				changed["extraEvidence"] = "not in original producer schema"
+			}
+			body, err := json.Marshal(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name == "trailing value" {
+				body = append(body, []byte(" {}")...)
+			}
+			copyControl.preparation.Response = body
+			if _, _, err := copyDispatcher.recoveredValidationWorkspace(t.Context(), copyTask, copyTask.UID); err == nil {
+				t.Fatal("accepted changed preparation evidence")
+			}
+		})
+	}
+}
