@@ -1,8 +1,8 @@
-# Turn 3: a new Task, restored from the checkpoint. The original workspace
-# and its Actors are gone; the bytes come back. The restore names the
-# checkpoint's UID and digest, so a swapped checkpoint is refused, and it
-# carries the same workspace settings as the source so the runtime profile
-# matches what was checkpointed.
+# A brand-new Task, outside the original Session, restored from the
+# checkpoint. The original workspace and its Actors are gone; the bytes come
+# back. The restore names the checkpoint's UID and digest, so a swapped
+# checkpoint is refused, and it carries the same workspace settings as the
+# source so the runtime profile matches what was saved.
 apiVersion: core.orka.ai/v1alpha1
 kind: Task
 metadata:

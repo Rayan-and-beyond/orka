@@ -1,11 +1,11 @@
-# Turn 2: the same Session, so the same suspended Sandbox wakes up with the
-# implementation still on disk. A Session keeps one runtime profile, so this
-# turn carries the same write-intent publication settings; the prompt asks
-# for verification only, and an unchanged tree publishes nothing.
+# The follow-up request. It names the same Session and nothing else, so it
+# wakes the same Sandbox with the first request's work still on its disk.
+# A Session keeps one runtime profile, so the workspace settings are repeated
+# verbatim; the prompt only reads, and an unchanged tree publishes nothing.
 apiVersion: core.orka.ai/v1alpha1
 kind: Task
 metadata:
-  name: inventory-verify
+  name: healthz-follow-up
   namespace: orka-system
   labels:
     demo.orka.ai/name: 02-agent-sandbox

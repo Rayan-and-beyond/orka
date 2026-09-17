@@ -1,11 +1,11 @@
-# Turn 2: same Session. A fresh Actor boots from the kept data; AUDIT.md is
-# still on disk even though the process that wrote it no longer exists. A
-# Session keeps one runtime profile, so the turn carries the same publication
-# settings; the prompt only reads, and an unchanged tree publishes nothing.
+# The first request. It opens a Session, asks for the substrate-session
+# workspace class by name, and points at the repository. Write intent means
+# Orka's Publisher verifies the tree and publishes the audit as a branch; the
+# agent itself never holds a Git token.
 apiVersion: core.orka.ai/v1alpha1
 kind: Task
 metadata:
-  name: audit-read
+  name: audit-start
   namespace: orka-system
   labels:
     demo.orka.ai/name: 03-agent-substrate
@@ -15,6 +15,7 @@ spec:
     name: codex-coder
   sessionRef:
     name: SESSION_NAME
+    create: true
   execution:
     workspace:
       classRef:
@@ -34,5 +35,8 @@ spec:
     pushBranch: orka/security-audit
   timeout: 20m
   prompt: |
-    Do not change any file. Run: pwd; ls; cat AUDIT.md. Reply with the exact
-    combined output.
+    Audit this repository for input validation gaps in the HTTP handlers.
+    Write your findings to AUDIT.md in the repository root, at most twelve
+    lines, one finding per line with the file and function. Do not change any
+    other file, and do not try to build or run anything: this runtime has no
+    Go toolchain. Reply with the exact contents of AUDIT.md.

@@ -1,11 +1,11 @@
-# Turn 1: implement the change inside a kubernetes-sigs Agent Sandbox.
-# The Task names a class, not a provider: sandbox-session means "one Sandbox
-# per Session, keep its data when the agent detaches". Write intent means
-# Orka's Publisher verifies the tree, publishes the branch, and opens the PR.
+# The first request. It opens a Session (create: true), asks for the
+# sandbox-session workspace class by name, and points at the repository.
+# Write intent means Orka's Publisher verifies the tree, publishes the branch,
+# and opens the pull request; the agent itself never holds a Git token.
 apiVersion: core.orka.ai/v1alpha1
 kind: Task
 metadata:
-  name: inventory-implement
+  name: healthz-implement
   namespace: orka-system
   labels:
     demo.orka.ai/name: 02-agent-sandbox

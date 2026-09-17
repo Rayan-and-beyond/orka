@@ -8,9 +8,9 @@ terminal: a pull request, an object that survived deletion, a refusal.
 | | Demo | Shows |
 |---|---|---|
 | 1 | [`01-chat-to-pr`](01-chat-to-pr) | Claude Code pointed at the cluster instead of a vendor. One prompt becomes Agents, Tasks, a review, and a CI-green pull request. No model key leaves the cluster. |
-| 2 | [`02-agent-sandbox`](02-agent-sandbox) | Two turns of Codex in one kubernetes-sigs Agent Sandbox. The Sandbox is suspended between turns and wakes with the same disk, then opens the PR. |
-| 3 | [`03-agent-substrate`](03-agent-substrate) | Codex as a gVisor Actor on Agent Substrate. Data-only suspend, a cold boot into a new Actor, a checkpoint that restores after the workspace is deleted. |
-| 4 | [`04-security-scan`](04-security-scan) | A vulnerable app scanned into findings with evidence. A person picks one; Orka validates it and opens the fix. |
+| 2 | [`02-agent-sandbox`](02-agent-sandbox) | A workspace that sleeps. One Session, two requests, one kubernetes-sigs Agent Sandbox: it is suspended between the requests (no Pod, only a disk) and wakes with the first request's work still on it. |
+| 3 | [`03-agent-substrate`](03-agent-substrate) | A save point for an agent. An audit runs as a gVisor Actor on Agent Substrate; between requests every worker is free, a follow-up boots a fresh Actor from the kept data, and a checkpoint restores after the workspace is deleted. |
+| 4 | [`04-security-scan`](04-security-scan) | Findings that arrive as pull requests. A legacy app is scanned into a threat model and validated findings; a person picks one and Orka opens the fix. |
 | 5 | [`05-two-teams`](05-two-teams) | Two teams, two namespaces, two Orka installations, one shared AI URL. The caller's token picks the team; cross-team requests are refused. Uses the compatibility router from PR #604. |
 
 The scripts are plain bash. `demo/lib/demo.sh` types commands the way a
