@@ -26,9 +26,23 @@ const verdictStyles: Record<string, string> = {
 
 function tryParseStructuredResult(result: string): StructuredResult | null {
   try {
-    const parsed = JSON.parse(result)
-    if (typeof parsed === 'object' && parsed !== null && (parsed.summary || parsed.diff || parsed.verdict || parsed.feedback || parsed.files)) {
-      return parsed as StructuredResult
+    const parsed: unknown = JSON.parse(result)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+
+    const candidate = parsed as Record<string, unknown>
+    const stringFields = ['summary', 'diff', 'verdict', 'feedback', 'pushBranch'] as const
+    for (const field of stringFields) {
+      if (field in candidate && typeof candidate[field] !== 'string') return null
+    }
+    if (
+      'files' in candidate &&
+      (!Array.isArray(candidate.files) || !candidate.files.every((file) => typeof file === 'string'))
+    ) {
+      return null
+    }
+
+    if (stringFields.some((field) => field in candidate) || 'files' in candidate) {
+      return candidate as StructuredResult
     }
     return null
   } catch {

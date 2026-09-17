@@ -214,6 +214,24 @@ describe('TaskResultViewer', () => {
     expect(screen.queryByTestId('verdict-badge')).not.toBeInTheDocument()
   })
 
+  it.each([
+    '{"files":"README.md"}',
+    '{"summary":{"text":"done"}}',
+    '{"diff":{"patch":"example"}}',
+    '{"files":["README.md",42]}',
+  ])('falls back to complete plain text for malformed structured result %s', async (result) => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('/api/v1/tasks/:id/result', () => HttpResponse.json({ result })),
+    )
+    render(<TaskResultViewer taskId="task-malformed" />)
+    await user.click(screen.getByText('Load Result'))
+    await waitFor(() => {
+      expect(screen.getByText(result)).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('verdict-badge')).not.toBeInTheDocument()
+  })
+
   it('renders structured result with diff section', async () => {
     const structured = JSON.stringify({
       summary: 'Changes applied',
