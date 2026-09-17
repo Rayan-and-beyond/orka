@@ -52,3 +52,21 @@ spec:
       report. Reply with LGTM on its own first line when the change is correct,
       tested, and matches the codebase's conventions; otherwise list the
       specific problems that must be fixed. Never modify files.
+---
+# analyst is a model-only Agent with no runtime and no repository: the
+# coordinator delegates reading, summarising, and planning to it. Without one,
+# every "think about this" delegation fails for lack of a Provider.
+apiVersion: core.orka.ai/v1alpha1
+kind: Agent
+metadata:
+  name: analyst
+  namespace: orka-system
+spec:
+  providerRef:
+    name: copilot
+  model:
+    name: claude-opus-4.7
+  systemPrompt:
+    inline: |
+      You analyse requirements, code excerpts, and results that are given to
+      you and answer precisely. You have no repository and run no commands.

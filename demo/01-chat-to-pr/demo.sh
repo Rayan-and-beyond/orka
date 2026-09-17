@@ -26,6 +26,9 @@ peq "kubectl -n $ORKA_NAMESPACE delete agents -l orka.ai/created-by=chat --wait=
 peq "gh pr list --repo sozercan/orka-demo-inventory --state open --json number --jq '.[].number' | xargs -I{} gh pr close {} --repo sozercan/orka-demo-inventory"
 peq "gh api repos/sozercan/orka-demo-inventory/git/matching-refs/heads/orka/ --jq '.[].ref' | sed 's#^refs/##' | xargs -I{} gh api -X DELETE repos/sozercan/orka-demo-inventory/git/refs/{}"
 ensure_port_forward
+# The "Connect as a developer" chapter shows these steps on camera; run them
+# quietly first so the earlier CLI calls have a live token too.
+orka_connect
 
 banner "Orka — from a chat message to a pull request" \
   "A developer asks Claude Code for a change. Orka runs the agents on Kubernetes. The keys stay in the cluster."
@@ -45,9 +48,9 @@ pe "kubectl -n orka-system get pods -l control-plane=controller-manager"
 say "The platform team registered one model Provider. Its API key is a Secret in"
 say "the cluster; nobody on the team has it on a laptop."
 pe "orka provider list"
-say "And two Agents for this team: a Codex coder that edits and runs commands,"
-say "and a Claude reviewer with read-only tools. A Task names an Agent and"
-say "inherits its model, runtime, and permissions."
+say "And three Agents for this team: a Codex coder that edits and runs"
+say "commands, a Claude reviewer with read-only tools, and an analyst that only"
+say "thinks. A Task names an Agent and inherits its model, runtime, and permissions."
 pe "orka agent list"
 
 chapter "Connect as a developer"
@@ -94,7 +97,8 @@ say "one says what it is: an agent Task names its Agent and whether it may"
 say "write; a container Task names its image."
 say "The table below refreshes as the coordinator works. Read it as: the coder"
 say "implements, a golang container validates, the reviewer reads, the coder"
-say "fixes if asked. Quiet stretches are cut from the recording."
+say "fixes if asked. A Failed row is the coordinator finding something out, such"
+say "as the wrong Go version, and trying again. Quiet stretches are cut."
 watch_tasks "! kill -0 $claude_pid" 12 orka.ai/source=anthropic-proxy \
   NAME:.metadata.name,AGENT:.spec.agentRef.name,IMAGE:.spec.image,INTENT:.spec.workspace.intent,PHASE:.status.phase
 wait "$claude_pid" || {
