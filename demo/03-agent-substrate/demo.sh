@@ -4,7 +4,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/demo.sh"
 cd "$repo_root"
 
-here=demo/03-agent-substrate
+here=$repo_root/demo/03-agent-substrate
 atespace=orka-system
 pool_ns=${SUBSTRATE_POOL_NAMESPACE:-ate-demo}
 : "${ATE_BIN:=$demo_root/setup/state/kubectl-ate}"
@@ -29,9 +29,12 @@ run_id=$(date -u +%H%M)
 session=audit-$run_id
 rendered=$demo_root/setup/state/03-agent-substrate
 mkdir -p "$rendered"
-for m in $here/manifests/*.yaml; do
+for m in "$here"/manifests/*.yaml; do
   sed "s/SESSION_NAME/$session/" "$m" >"$rendered/$(basename "$m")"
 done
+# The viewer sees short file names, the way a developer keeps a manifest
+# next to the code, not the recorder's state directory.
+cd "$rendered"
 ensure_port_forward
 orka_connect
 delete_demo_objects 03-agent-substrate
@@ -51,8 +54,10 @@ actor_uid() {
 ws_state() {
   kubectl -n "$ORKA_NAMESPACE" get executionworkspace "$1" -o jsonpath='{.status.state}' 2>/dev/null
 }
-# One line per Actor: name, state, and the worker Pod hosting it.
-actors="kubectl ate get actors -a $atespace -o json | jq -r '(.actors // [])[] | [.metadata.name, (.status.state | sub(\"ACTOR_STATE_\"; \"\")), (.status.workerAssignment.workerPod // \"-\")] | @tsv' | column -t | grep . || echo 'no Actors'"
+# One line per Actor: name, state, and the worker Pod hosting it. Defined on
+# screen once in the "Actors and workers" chapter, then typed as `actors`.
+actors_def="actors() { kubectl ate get actors -a $atespace -o json | jq -r '.actors[]? | [.metadata.name, (.status.state | ltrimstr(\"ACTOR_STATE_\")), .status.workerAssignment.workerPod // \"-\"] | @tsv' | column -t | grep . || echo 'no Actors'; }"
+actors=actors
 
 banner "Orka — a save point for an agent" \
   "An audit runs in a gVisor sandbox on Agent Substrate. Pause it, resume it, save a copy, restore the copy."
@@ -76,7 +81,10 @@ pe "kubectl -n $pool_ns get workerpools"
 pe "kubectl ate get workers"
 say "Each agent runs in an Actor: a sandbox with its own kernel, from gVisor,"
 say "that any free worker can host. An Actor can be frozen to storage and"
-say "thawed later on whichever worker is free. Right now there are none."
+say "thawed later on whichever worker is free. The plugin's Actor table is"
+say "wide, so one shell function keeps the three columns that matter."
+pe "$actors_def"
+say "Right now there are no Actors."
 pe "$actors"
 say "Orka's class for this host says: one Actor per Session, suspend when the"
 say "agent stops, and remove everything when the workspace is deleted."
@@ -87,9 +95,9 @@ chapter "The first request"
 
 say "The request is a Task. It opens a Session, asks for the substrate-session"
 say "class, and points at the repository."
-pe "sed -n '13,23p' $rendered/first-request.yaml"
-pe "sed -n '37,42p' $rendered/first-request.yaml"
-pe "orka task create -f $rendered/first-request.yaml"
+pe "sed -n '13,23p' first-request.yaml"
+pe "sed -n '37,42p' first-request.yaml"
+pe "orka task create -f first-request.yaml"
 pe "orka session list"
 say "Orka creates an Actor for the Session and Substrate places it on a worker."
 wait_for "an Actor to boot" "(( \$(actor_count) >= 1 ))" 600
@@ -123,8 +131,8 @@ chapter "A follow-up in the same Session"
 
 say "A colleague picks the audit up. Their request names the same Session and"
 say "asks to read what is there."
-pe "sed -n '14,18p;37,39p' $rendered/follow-up-request.yaml"
-pe "orka task create -f $rendered/follow-up-request.yaml"
+pe "sed -n '14,18p;37,39p' follow-up-request.yaml"
+pe "orka task create -f follow-up-request.yaml"
 wait_for "a new Actor to boot" "(( \$(actor_count) >= 1 ))" 600
 pe "$actors"
 second_actor=$(actor_uid)
@@ -140,12 +148,12 @@ chapter "Save a checkpoint"
 
 wait_for "the workspace to suspend again" "[[ \$(ws_state $ws) == Suspended ]]" 600
 ws_uid=$(kubectl -n "$ORKA_NAMESPACE" get executionworkspace "$ws" -o jsonpath='{.metadata.uid}')
-sed "s/WORKSPACE_NAME/$ws/; s/WORKSPACE_UID/$ws_uid/" "$rendered/checkpoint.yaml" >"$demo_root/setup/state/03-checkpoint.yaml"
+sed "s/WORKSPACE_NAME/$ws/; s/WORKSPACE_UID/$ws_uid/" "$here/manifests/checkpoint.yaml" >checkpoint.yaml
 say "A checkpoint is a copy of the workspace's data that Orka keeps as an"
 say "object of its own, with a digest. It points at the exact workspace by"
 say "UID, and it survives that workspace being deleted."
-pe "cat $demo_root/setup/state/03-checkpoint.yaml"
-pe "kubectl apply -f $demo_root/setup/state/03-checkpoint.yaml"
+pe "cat checkpoint.yaml"
+pe "kubectl apply -f checkpoint.yaml"
 wait_for "the checkpoint to be Ready" \
   "[[ \$(kubectl -n $ORKA_NAMESPACE get executionworkspacecheckpoint audit-checkpoint -o jsonpath='{.status.phase}') == Ready ]]" 600
 pe "kubectl -n orka-system get executionworkspacecheckpoint audit-checkpoint -o custom-columns=NAME:.metadata.name,PHASE:.status.phase,DIGEST:.status.digest"
@@ -162,9 +170,9 @@ say "It names the checkpoint's UID and digest, so a swapped or tampered"
 say "checkpoint is refused."
 cp_uid=$(kubectl -n "$ORKA_NAMESPACE" get executionworkspacecheckpoint audit-checkpoint -o jsonpath='{.metadata.uid}')
 cp_digest=$(kubectl -n "$ORKA_NAMESPACE" get executionworkspacecheckpoint audit-checkpoint -o jsonpath='{.status.digest}')
-sed "s/CHECKPOINT_UID/$cp_uid/; s/CHECKPOINT_DIGEST/$cp_digest/" "$rendered/restore-request.yaml" >"$demo_root/setup/state/03-restore.yaml"
-pe "sed -n '17,25p' $demo_root/setup/state/03-restore.yaml"
-pe "orka task create -f $demo_root/setup/state/03-restore.yaml"
+sed "s/CHECKPOINT_UID/$cp_uid/; s/CHECKPOINT_DIGEST/$cp_digest/" "$here/manifests/restore-request.yaml" >restore-request.yaml
+pe "sed -n '17,25p' restore-request.yaml"
+pe "orka task create -f restore-request.yaml"
 wait_task audit-restore 1200
 pe "orka task result audit-restore"
 ok "The audit came back byte for byte: from a deleted workspace, written by an Actor that is long gone."

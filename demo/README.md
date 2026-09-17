@@ -65,6 +65,10 @@ Then record:
 ```sh
 demo/record.sh                     # every demo
 demo/record.sh 02-agent-sandbox    # one
+
+# Optional: animated GIFs next to the casts (needs agg)
+demo/render.sh                     # every cast
+demo/render.sh 02-agent-sandbox    # one
 ```
 
 `record.sh` runs `demo/reset.sh` first, records at 100x28 with idle time

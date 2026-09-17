@@ -46,13 +46,21 @@ say "The payments team and the inventory team both want AI agents on the"
 say "cluster. They use different models, have different budgets, and must never"
 say "see each other's work. The company wants exactly one AI base URL for every"
 say "tool: Claude Code, editors, CI."
+say ""
+say "Two words for what follows. A namespace is Kubernetes' way of giving a"
+say "team its own room: its own objects, its own permissions. A ServiceAccount"
+say "token is the badge a person or a tool carries; it says who you are and"
+say "which room you belong to."
+say ""
 say "So the platform team gave each team its own namespace with its own Orka,"
-say "and put one small router in front."
+say "and put one small router in front. The router reads the badge and opens"
+say "the right door. Nothing else."
 
 chapter "Two installations, one router"
 
-say "Each team's namespace holds a complete Orka: its controller, its model"
-say "Provider, its Agents, its Tasks. Nothing is shared but the door."
+say "Each team's namespace holds a complete Orka: the controller that runs"
+say "Tasks, the Provider that holds the model key, the Agents the team"
+say "defined. Nothing is shared but the door."
 pe "kubectl get pods -n team-payments -l app=orka-controller"
 pe "kubectl get pods -n team-inventory -l app=orka-controller"
 say "Their Providers differ. Payments is on an approved Claude model; inventory"
@@ -66,7 +74,8 @@ pe "kubectl -n $router_ns get configmap orka-compat-router -o jsonpath='{.data.r
 chapter "Two developers, one URL"
 
 say "Alice is on payments, Bob on inventory. Same base URL for both. The only"
-say "thing that differs is the ServiceAccount token each one holds."
+say "thing that differs is the badge: a ServiceAccount token minted in each"
+say "team's namespace. It goes where an API key normally goes."
 pe "export ANTHROPIC_BASE_URL=$router_url/anthropic"
 pe "ALICE=\$(kubectl -n team-payments create token alice)"
 pe "BOB=\$(kubectl -n team-inventory create token bob)"
@@ -79,8 +88,10 @@ ok "One URL, two answers. The token chose the namespace; nothing in the request 
 
 chapter "Same request, different homes"
 
-say "Both developers ask Claude Code for the same small thing. Each request"
-say "becomes a Task in its own team's namespace, run by that team's Orka."
+say "Both developers ask Claude Code for the same small thing. Orka's chat"
+say "endpoint turns a conversation into Tasks, the unit of work it runs on the"
+say "cluster. Each request becomes a Task in its own team's namespace, run by"
+say "that team's Orka and paid for from that team's budget."
 pe "cat <<'TXT'
 $request
 TXT"
@@ -98,7 +109,8 @@ pe "kubectl get tasks -n team-inventory -o custom-columns=NAME:.metadata.name,TY
 
 chapter "The boundary"
 
-say "Bob asks for the payments team's Provider by name, through the same URL."
+say "What stops Bob from using the payments team's model? He asks for the"
+say "payments Provider by name, through the same URL."
 export CLAUDE_CONFIG_DIR=$work/bob
 pex "ANTHROPIC_API_KEY=\$BOB claude -p --model approved-models/claude-opus-4.7 --no-session-persistence 'Reply with OK'"
 ok "Refused, with no fallback. The router does not even know what a Provider is; the inventory installation simply has no such thing."

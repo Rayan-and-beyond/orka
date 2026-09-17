@@ -4,7 +4,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/demo.sh"
 cd "$repo_root"
 
-here=demo/02-agent-sandbox
+here=$repo_root/demo/02-agent-sandbox
 runtime_ns=${ORKA_RUNTIME_NAMESPACE:-orka-runtimes}
 branch=orka/healthz-from-sandbox
 export runtime_ns
@@ -16,9 +16,12 @@ run_id=$(date -u +%H%M)
 session=inventory-$run_id
 rendered=$demo_root/setup/state/02-agent-sandbox
 mkdir -p "$rendered"
-for m in $here/manifests/*.yaml; do
+for m in "$here"/manifests/*.yaml; do
   sed "s/SESSION_NAME/$session/" "$m" >"$rendered/$(basename "$m")"
 done
+# The viewer sees short file names, the way a developer keeps a manifest
+# next to the code, not the recorder's state directory.
+cd "$rendered"
 ensure_port_forward
 orka_connect
 delete_demo_objects 02-agent-sandbox
@@ -78,14 +81,17 @@ chapter "The first request"
 say "A request to Orka is a Task. Three parts matter here: the Session it opens,"
 say "the class it asks for, and the repository it works on. It never names a"
 say "template, a claim, or a Pod."
-pe "sed -n '13,23p' $rendered/first-request.yaml"
+pe "sed -n '13,23p' first-request.yaml"
 say "The rest of the spec is the repository, the branch to publish, and the ask."
-pe "sed -n '41,46p' $rendered/first-request.yaml"
-pe "orka task create -f $rendered/first-request.yaml"
+pe "sed -n '41,46p' first-request.yaml"
+pe "orka task create -f first-request.yaml"
 say "The Session now exists. Later requests will name it."
 pe "orka session list"
 say "Orka asks Agent Sandbox for a Sandbox built from the platform team's"
-say "template. Watch the objects appear."
+say "template. The template fixes the image and runs the agent as a normal"
+say "user; nothing in the Task can change that."
+pe "kubectl -n orka-system get sandboxtemplate orka-live-template -o jsonpath='{.spec.podTemplate.spec.securityContext}' | jq -c"
+say "Watch the objects appear."
 wait_for "the Sandbox to exist" "[[ -n \$(sandbox_name) ]]" 300
 sb=$(sandbox_name)
 pod=$sb
@@ -131,8 +137,8 @@ chapter "A follow-up in the same Session"
 
 say "Tomorrow the developer asks what changed. The follow-up names the same"
 say "Session, and that is the only thing that ties it to yesterday's work."
-pe "sed -n '13,17p;40,42p' $rendered/follow-up-request.yaml"
-pe "orka task create -f $rendered/follow-up-request.yaml"
+pe "sed -n '13,17p;40,42p' follow-up-request.yaml"
+pe "orka task create -f follow-up-request.yaml"
 wait_for "the Sandbox to wake" "[[ \$(sandbox_mode $sb) == Running ]]" 600
 pe "kubectl -n $runtime_ns get sandbox $sb -o custom-columns=$sandbox_cols"
 [[ $(kubectl -n "$runtime_ns" get sandboxes.agents.x-k8s.io "$sb" -o jsonpath='{.metadata.uid}') == "$sb_uid" ]] ||

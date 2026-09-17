@@ -9,6 +9,9 @@ repo=nodejs-goof
 
 peq "orka security repo delete $repo"
 peq "kubectl -n $ORKA_NAMESPACE delete repositoryscan $repo --wait=true"
+# Each recording opens a fix; close the earlier ones so the fork does not
+# accumulate them and the new pull request is the only open one.
+peq "gh pr list --repo sozercan/$repo --state open --limit 100 --json number,headRefName --jq '.[] | select(.headRefName | startswith(\"orka/security/\")) | .number' | xargs -I{} gh pr close {} --repo sozercan/$repo --delete-branch"
 ensure_port_forward
 orka_connect
 

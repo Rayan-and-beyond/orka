@@ -111,9 +111,9 @@ pe "cat $here/request.md"
 say "Sent as an ordinary Claude Code prompt. Orka's coordinator mode replaces the"
 say "client's tools with its own: create Agents and Tasks, wait, review, open a PR."
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-p "claude -p --model copilot/claude-opus-4.7 \"\$(cat $here/request.md)\" | tee $work/answer.md &"
+p "claude -p --model copilot/claude-opus-4.7 \"\$(cat $here/request.md)\" | tee $here/answer.md &"
 claude -p --model copilot/claude-opus-4.7 --no-session-persistence "$(cat "$here/request.md")" \
-  >"$work/answer.md" 2>"$work/claude.err" &
+  >"$here/answer.md" 2>"$work/claude.err" &
 claude_pid=$!
 nap 0.6
 
@@ -153,8 +153,8 @@ pe "orka task status $coder"
 
 chapter "The pull request"
 
-pe "cat $work/answer.md"
-pr=$(pr_url_from "$(cat "$work/answer.md")")
+pe "cat $here/answer.md"
+pr=$(pr_url_from "$(cat "$here/answer.md")")
 assert_pr "$pr"
 pe "gh pr view $pr --json title,state,headRefName,statusCheckRollup --jq '{title,state,branch:.headRefName,checks:[.statusCheckRollup[]?|{name,conclusion}]}'"
 pe "gh pr diff $pr --name-only"
