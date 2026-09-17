@@ -17,6 +17,38 @@ mkdir -p "$CLAUDE_CONFIG_DIR"
 # Provider serves, or those calls fail noisily in the controller log.
 printf '{"permissions":{"defaultMode":"bypassPermissions"},"env":{"ANTHROPIC_SMALL_FAST_MODEL":"copilot/claude-haiku-4.5"}}\n' >"$CLAUDE_CONFIG_DIR/settings.json"
 
+# One row per child Task, described the way a viewer would describe it:
+# who ran it and what for, rather than the raw spec fields.
+chat_task_table() {
+  kubectl -n "$ORKA_NAMESPACE" get tasks -l orka.ai/source=anthropic-proxy \
+    --sort-by=.metadata.creationTimestamp -o json | jq -r '
+    ["NAME","ROLE","PHASE"],
+    (.items[] | [
+      .metadata.name,
+      (if .spec.type == "container" then
+         "validate in " + (.spec.image // "the worker image")
+       elif .spec.agentRef.name == "codex-coder" then
+         (if .spec.workspace.intent == "write" then "implement (codex-coder)" else "inspect (codex-coder)" end)
+       elif .spec.agentRef.name == "claude-reviewer" then "review (claude-reviewer)"
+       elif .spec.agentRef.name == "analyst" then "analyse (analyst)"
+       else .spec.type + " (" + (.spec.agentRef.name // "-") + ")" end),
+      (.status.phase // "Pending")
+    ]) | @tsv' | column -t -s $'\t'
+}
+watch_chat_tasks() {
+  local until=$1 interval=${2:-10} last="" now
+  while true; do
+    now=$(chat_task_table 2>/dev/null || true)
+    if [[ $now != "$last" ]]; then
+      printf '%s── %s ──%s\n' "$C_DIM" "$(date -u +%H:%M:%S)" "$C_RESET"
+      printf '%s\n' "$now"
+      last=$now
+    fi
+    if eval "$until" >/dev/null 2>&1; then return 0; fi
+    sleep "$interval"
+  done
+}
+
 # Quiet reset so the recording always starts from the same place. The demo
 # repository exists for these recordings, so open pull requests and orka/*
 # branches from earlier runs are cleared; the coordinator would otherwise
@@ -92,15 +124,13 @@ say "creating Kubernetes Tasks. Each one is a Pod or a pooled agent runtime."
 wait_for "the coordinator's first Task" \
   "kubectl -n $ORKA_NAMESPACE get tasks -l orka.ai/source=anthropic-proxy --no-headers 2>/dev/null | grep -q ." 600
 pe "orka task list"
-say "Tasks born from the chat endpoint are named proxy- plus a short id. Each"
-say "one says what it is: an agent Task names its Agent and whether it may"
-say "write; a container Task names its image."
-say "The table below refreshes as the coordinator works. Read it as: the coder"
-say "implements, a golang container validates, the reviewer reads, the coder"
-say "fixes if asked. A Failed row is the coordinator finding something out, such"
-say "as the wrong Go version, and trying again. Quiet stretches are cut."
-watch_tasks "! kill -0 $claude_pid" 12 orka.ai/source=anthropic-proxy \
-  NAME:.metadata.name,AGENT:.spec.agentRef.name,IMAGE:.spec.image,INTENT:.spec.workspace.intent,PHASE:.status.phase
+say "Tasks born from the chat endpoint are named proxy- plus a short id. The"
+say "table below refreshes as the coordinator works, with each Task's role:"
+say "the coder implements, containers validate, the reviewer reads, the coder"
+say "fixes if asked. A Failed row is the coordinator finding something out,"
+say "such as which Go image the repository needs, and trying again."
+say "Quiet stretches are cut from the recording."
+watch_chat_tasks "! kill -0 $claude_pid" 12
 wait "$claude_pid" || {
   bad "claude exited with an error"
   cat "$work/claude.err" >&2
