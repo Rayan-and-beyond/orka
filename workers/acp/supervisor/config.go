@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/orka-agents/orka/internal/acp"
 	harnessv2 "github.com/orka-agents/orka/internal/harness/v2"
 	"github.com/orka-agents/orka/internal/workspacedelta"
@@ -63,10 +65,6 @@ type AgentDiagnosticFilter struct {
 	Startup func(text string) (summary string, ok bool)
 }
 
-type ArtifactUploader interface {
-	UploadWorkspaceDelta(context.Context, harnessv2.CreateWorkspaceDeltaRequest, []byte, string) (harnessv2.ArtifactReference, error)
-}
-
 type WorkspaceMaterializer interface {
 	Materialize(context.Context, harnessv2.CreateRuntimeSessionRequest, string) error
 }
@@ -78,6 +76,9 @@ func (f WorkspaceMaterializerFunc) Materialize(ctx context.Context, request harn
 }
 
 type Config struct {
+	// Tracer belongs to this supervisor. Nil disables instrumentation. It never
+	// enters the provider process configuration or environment.
+	Tracer        trace.Tracer
 	ListenAddress string
 	Fence         harnessv2.Fence
 	Capabilities  harnessv2.CapabilitiesResponse
@@ -105,7 +106,7 @@ type Config struct {
 	ProviderProxy         ProviderProxyConfig
 	MCPBroker             MCPBroker
 	WorkspaceMaterializer WorkspaceMaterializer
-	ArtifactUploader      ArtifactUploader
+	ArtifactUploader      *RemoteArtifactUploader
 	DeltaOptions          workspacedelta.Options
 	// E2EPromptWriteFaultRecorder persists direct-pool fault consumption
 	// outside the runtime Pod so replacement cannot re-arm the test fault.

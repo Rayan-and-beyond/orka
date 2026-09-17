@@ -656,10 +656,7 @@ func (d *ACPDispatcher) readRecoverableTask(
 	if candidate == nil {
 		return nil, false, nil
 	}
-	reader := d.APIReader
-	if reader == nil {
-		reader = d.Client
-	}
+	reader := uncachedReader(d.APIReader, d.Client)
 	if reader == nil {
 		return nil, false, fmt.Errorf("ACP recovery requires a Kubernetes reader")
 	}
@@ -822,10 +819,7 @@ func (d *ACPDispatcher) recoverArchivedTerminalSession(
 	key := client.ObjectKeyFromObject(task)
 	return true, retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		latest := &corev1alpha1.Task{}
-		reader := d.APIReader
-		if reader == nil {
-			reader = d.Client
-		}
+		reader := uncachedReader(d.APIReader, d.Client)
 		if err := reader.Get(ctx, key, latest); err != nil {
 			return client.IgnoreNotFound(err)
 		}
@@ -863,7 +857,7 @@ func validateArchivedSessionTask(task *corev1alpha1.Task, attempt *store.PromptA
 	if receipt.Key != key || receipt.PromptAttemptID != attempt.ID || receipt.ProjectionState != store.OutboxProjectionDelivered {
 		return fmt.Errorf("%w: archived Session proof is not the delivered terminal projection for this attempt", store.ErrConflict)
 	}
-	projection, err := taskterminal.ValidateFinalizedSessionProjection(receipt.Payload, task, string(task.UID), attempt, receipt.SessionTurn())
+	projection, err := taskterminal.ValidateSessionCleanupProjection(receipt.Payload, task, string(task.UID), attempt, receipt.SessionTurn())
 	if err != nil {
 		return err
 	}
@@ -1603,10 +1597,7 @@ func (d *ACPDispatcher) revalidateExternalRuntimeRotatedEndpointCleanupMutation(
 	if authority == nil || authority.frozenRuntime == nil {
 		return errors.New("external AgentRuntime rotated-endpoint cleanup authority is incomplete")
 	}
-	reader := d.APIReader
-	if reader == nil {
-		reader = d.Client
-	}
+	reader := uncachedReader(d.APIReader, d.Client)
 	current := &corev1alpha1.AgentRuntime{}
 	if err := reader.Get(ctx, authority.runtimeKey, current); err != nil {
 		return markExternalRuntimeMutationReadRetryable(fmt.Errorf("re-read external AgentRuntime before rotated-endpoint cleanup mutation: %w", err))
@@ -2330,9 +2321,13 @@ func (d *ACPDispatcher) finalizeRecoveredTerminalSession(ctx context.Context, ta
 		}
 		finalizeErr = d.finalizeTaskSessionMarker(ctx, task, fence, session, "Failed", message, corev1alpha1.TaskPhaseFailed, execution)
 	case store.PromptExecutionSucceeded:
-		delivery := task.Status.Delivery
-		if delivery == nil {
-			delivery = deliveryStatusFromPromptState(attempt.DeliveryState)
+		delivery, deliveryErr := d.recoveredTerminalDeliveryStatus(ctx, task, attempt)
+		if deliveryErr != nil {
+			return deliveryErr
+		}
+		if delivery == nil || store.PromptDeliveryState(delivery.State) != attempt.DeliveryState ||
+			string(delivery.Outcome) != string(attempt.DeliveryState) {
+			return fmt.Errorf("%w: recovered Session delivery does not match the authoritative terminal attempt", store.ErrConflict)
 		}
 		phase := corev1alpha1.TaskPhaseFailed
 		switch attempt.DeliveryState {

@@ -10,6 +10,12 @@ so clients like [Continue](https://continue.dev/) and [Cursor](https://cursor.sh
 at Orka instead of at a model vendor. Your cluster holds the API keys; the client holds a
 ServiceAccount token.
 
+For teams using separate namespaces, the optional
+[shared compatibility router](../operations/shared-compatibility-api.md) selects
+the installation from the validated ServiceAccount token. Clients use one base
+URL and omit the namespace parameter. Direct installation endpoints keep their
+existing namespace rules.
+
 :::warning[This is not a transparent proxy by default]
 Orka rewrites your request before sending it upstream: it **discards the tools your client
 sent**, injects its own, and prepends its own system prompt. Read
@@ -100,7 +106,7 @@ spec:
 
 3. **ServiceAccount token and RBAC** for authentication and coordinator tools:
 
-Follow the [API-client setup](../getting-started.md#give-yourself-an-api-client) to
+Follow the [API-client setup](../getting-started.md#connect-to-the-api) to
 configure `orka-client` and its Task permissions. Coordinator Task creation requires
 `tasks/create`. Agent creation currently does not check a ServiceAccount caller's
 `agents/create` permission; see the [API authorization limitation](../operations/troubleshooting.md#i-get-403-from-the-api).
