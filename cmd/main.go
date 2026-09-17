@@ -1486,6 +1486,7 @@ func main() {
 			BearerTokenFile: acpProviderProxyTokenFile,
 		}
 		runtimePoolReconciler.Epochs = controllerEpochManager
+		runtimePoolReconciler.ControlStore = durableControlStore
 		runtimePoolReconciler.EnablePDB = true
 		runtimePoolReconciler.E2EPromptWriteAmbiguityMarker = acpE2EPromptWriteAmbiguityMarker
 		runtimePoolReconciler.AgentSandboxEnabled = agentSandboxEnabled
