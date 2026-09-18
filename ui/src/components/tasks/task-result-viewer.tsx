@@ -41,8 +41,9 @@ function tryParseStructuredResult(result: string): StructuredResult | null {
       return null
     }
 
-    if (stringFields.some((field) => field in candidate) || 'files' in candidate) {
-      return candidate as StructuredResult
+    const structured = candidate as StructuredResult
+    if (stringFields.some((field) => structured[field]) || structured.files?.length) {
+      return structured
     }
     return null
   } catch {
